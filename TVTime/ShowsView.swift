@@ -5,6 +5,9 @@ struct ShowsView: View {
     @State private var mediaFilter: MediaFilter = .all
     @State private var timelineIndex = 0
     @State private var isScrubbingTimeline = false
+    @State private var isTimelineVisible = false
+    @State private var isAtScheduleBottom = false
+    @State private var timelineHideTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -41,7 +44,7 @@ struct ShowsView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .coordinateSpace(name: "shows-scroll")
-                .contentMargins(.trailing, showsTimeline(sections) ? 30 : 0, for: .scrollContent)
+                .contentMargins(.trailing, showsTimeline(sections) ? 16 : 0, for: .scrollContent)
                 .animation(.snappy, value: mediaFilter)
                 .refreshable {
                     if !store.hasLoadedHistory {
@@ -69,20 +72,44 @@ struct ShowsView: View {
                     }
                 }
                 .onPreferenceChange(SectionPositionPreferenceKey.self) { positions in
-                    guard !isScrubbingTimeline,
+                    guard !isScrubbingTimeline, !isAtScheduleBottom,
                           let nearest = positions.min(by: { abs($0.value) < abs($1.value) }),
                           let index = sections.firstIndex(where: { $0.id == nearest.key }) else { return }
                     timelineIndex = index
                 }
+                .modifier(ScrollActivityModifier { isScrolling in
+                    if isScrolling {
+                        revealTimeline()
+                    } else {
+                        scheduleTimelineHide()
+                    }
+                })
+                .modifier(ScrollBottomModifier { isAtBottom in
+                    if isAtBottom {
+                        isAtScheduleBottom = true
+                        guard !isScrubbingTimeline, !sections.isEmpty else { return }
+                        timelineIndex = sections.count - 1
+                    } else if !isScrubbingTimeline {
+                        isAtScheduleBottom = false
+                    }
+                })
                 .overlay(alignment: .trailing) {
-                    if showsTimeline(sections) {
+                    if showsTimeline(sections) && isTimelineVisible {
                         TimelineScrubber(
                             sections: sections,
                             selectedIndex: timelineIndex,
-                            onScrubbingChanged: { isScrubbingTimeline = $0 },
+                            onScrubbingChanged: { isScrubbing in
+                                isScrubbingTimeline = isScrubbing
+                                if isScrubbing {
+                                    revealTimeline()
+                                } else {
+                                    scheduleTimelineHide()
+                                }
+                            },
                             onSelect: { index, animated in
                                 guard sections.indices.contains(index) else { return }
                                 timelineIndex = index
+                                isAtScheduleBottom = index == sections.count - 1
                                 if animated {
                                     withAnimation(.snappy) {
                                         proxy.scrollTo(sections[index].id, anchor: .top)
@@ -92,9 +119,11 @@ struct ShowsView: View {
                                 }
                             }
                         )
-                        .padding(.trailing, 5)
+                        .padding(.trailing, 11)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
+                .animation(.easeOut(duration: 0.2), value: isTimelineVisible)
             }
             .background(Color(uiColor: .systemBackground))
             .navigationTitle("TV Time")
@@ -152,6 +181,20 @@ struct ShowsView: View {
         sections.count > 2 && sections.reduce(0) { $0 + $1.airings.count } > 6
     }
 
+    private func revealTimeline() {
+        timelineHideTask?.cancel()
+        if !isTimelineVisible { isTimelineVisible = true }
+    }
+
+    private func scheduleTimelineHide() {
+        timelineHideTask?.cancel()
+        timelineHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1_600))
+            guard !Task.isCancelled, !isScrubbingTimeline else { return }
+            isTimelineVisible = false
+        }
+    }
+
     private func anchorSectionIndex(in sections: [AiringSection]) -> Int? {
         guard let id = anchorSectionID(in: sections) else { return nil }
         return sections.firstIndex { $0.id == id }
@@ -178,6 +221,45 @@ private struct SectionPositionPreferenceKey: PreferenceKey {
 
     static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
         value.merge(nextValue(), uniquingKeysWith: { _, newest in newest })
+    }
+}
+
+private struct ScrollActivityModifier: ViewModifier {
+    let onChange: (Bool) -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollPhaseChange { _, phase in
+                onChange(phase.isScrolling)
+            }
+        } else {
+            content.simultaneousGesture(
+                DragGesture(minimumDistance: 3)
+                    .onChanged { value in
+                        guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                        onChange(true)
+                    }
+                    .onEnded { _ in onChange(false) }
+            )
+        }
+    }
+}
+
+private struct ScrollBottomModifier: ViewModifier {
+    let onChange: (Bool) -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.visibleRect.maxY >= geometry.contentSize.height + geometry.contentInsets.bottom - 12
+            } action: { _, isAtBottom in
+                onChange(isAtBottom)
+            }
+        } else {
+            content
+        }
     }
 }
 
@@ -219,31 +301,27 @@ private struct TimelineScrubber: View {
             }
 
             VStack(spacing: 5) {
-                jumpButton(
-                    systemImage: "arrow.up.to.line.compact",
-                    label: "Jump to earliest date",
-                    index: 0
-                )
-
                 ZStack(alignment: .top) {
                     Capsule()
-                        .fill(Color.secondary.opacity(0.28))
-                        .frame(width: 4, height: trackHeight)
+                        .fill(Color.primary.opacity(0.18))
+                        .frame(width: 3, height: trackHeight)
 
                     Capsule()
-                        .fill(AppTheme.accent.opacity(0.72))
-                        .frame(width: 4, height: max(thumbSize / 2, progress * trackHeight))
+                        .fill(AppTheme.accent.opacity(0.48))
+                        .frame(width: 3, height: max(thumbSize / 2, progress * trackHeight))
 
                     Circle()
-                        .fill(AppTheme.accent)
+                        .fill(.ultraThinMaterial)
                         .frame(width: thumbSize, height: thumbSize)
                         .overlay {
-                            Circle().stroke(Color.black.opacity(0.28), lineWidth: 1)
+                            Circle()
+                                .fill(AppTheme.accent.opacity(0.82))
+                                .padding(4)
                         }
                         .offset(y: progress * (trackHeight - thumbSize))
-                        .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
+                        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
                 }
-                .frame(width: 30, height: trackHeight)
+                .frame(width: 24, height: trackHeight)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
@@ -253,7 +331,14 @@ private struct TimelineScrubber: View {
                                 onScrubbingChanged(true)
                             }
                             let fraction = min(max((value.location.y - thumbSize / 2) / (trackHeight - thumbSize), 0), 1)
-                            let index = Int((fraction * CGFloat(sections.count - 1)).rounded())
+                            let index: Int
+                            if fraction >= 0.84 {
+                                index = sections.count - 1
+                            } else if fraction <= 0.12 {
+                                index = 0
+                            } else {
+                                index = Int((fraction * CGFloat(sections.count - 1)).rounded())
+                            }
                             if index != safeIndex { onSelect(index, false) }
                         }
                         .onEnded { _ in
@@ -273,40 +358,9 @@ private struct TimelineScrubber: View {
                     .accessibilityLabel("Schedule timeline")
                     .accessibilityValue(sections[safeIndex].title)
                 }
-
-                jumpButton(
-                    systemImage: "arrow.down.to.line.compact",
-                    label: "Jump to latest date",
-                    index: sections.count - 1
-                )
-            }
-            .padding(.horizontal, 5)
-            .padding(.vertical, 7)
-            .background(.ultraThinMaterial)
-            .clipShape(Capsule())
-            .overlay {
-                Capsule().stroke(AppTheme.separator, lineWidth: 0.5)
             }
         }
         .animation(.easeOut(duration: 0.14), value: isDragging)
-    }
-
-    private func jumpButton(systemImage: String, label: String, index: Int) -> some View {
-        Button {
-            onScrubbingChanged(true)
-            onSelect(index, true)
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(650))
-                onScrubbingChanged(false)
-            }
-        } label: {
-            Image(systemName: systemImage)
-                .font(.caption.weight(.bold))
-                .frame(width: 28, height: 28)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.primary)
-        .accessibilityLabel(label)
     }
 }
 
