@@ -12,6 +12,8 @@ enum MediaType: String, Codable, CaseIterable, Identifiable {
 struct Show: Identifiable, Hashable, Codable {
     let id: Int
     let tvmazeID: Int?
+    let tmdbID: Int?
+    let anilistID: Int?
     let title: String
     let network: String
     let genres: [String]
@@ -27,6 +29,8 @@ struct Show: Identifiable, Hashable, Codable {
     init(
         id: Int,
         tvmazeID: Int?,
+        tmdbID: Int? = nil,
+        anilistID: Int? = nil,
         title: String,
         network: String,
         genres: [String],
@@ -41,6 +45,8 @@ struct Show: Identifiable, Hashable, Codable {
     ) {
         self.id = id
         self.tvmazeID = tvmazeID
+        self.tmdbID = tmdbID
+        self.anilistID = anilistID
         self.title = title
         self.network = network
         self.genres = genres
@@ -55,13 +61,15 @@ struct Show: Identifiable, Hashable, Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, tvmazeID, title, network, genres, imageName, imageURL, tintHex, summary, status, mediaType, releaseDate, runtime
+        case id, tvmazeID, tmdbID, anilistID, title, network, genres, imageName, imageURL, tintHex, summary, status, mediaType, releaseDate, runtime
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(Int.self, forKey: .id)
         tvmazeID = try container.decodeIfPresent(Int.self, forKey: .tvmazeID)
+        tmdbID = try container.decodeIfPresent(Int.self, forKey: .tmdbID)
+        anilistID = try container.decodeIfPresent(Int.self, forKey: .anilistID)
         title = try container.decode(String.self, forKey: .title)
         network = try container.decode(String.self, forKey: .network)
         genres = try container.decode([String].self, forKey: .genres)

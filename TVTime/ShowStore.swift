@@ -16,6 +16,8 @@ final class ShowStore: ObservableObject {
     private let savedShowsKey = "savedTVMazeShows"
     private let savedAiringsKey = "savedTVMazeAirings"
     private let client = TVMazeClient()
+    private let tmdbClient = TMDBClient()
+    private let aniListClient = AniListClient()
 
     init() {
         let savedShows: [Show] = Self.load([Show].self, key: savedShowsKey) ?? []
@@ -82,10 +84,10 @@ final class ShowStore: ObservableObject {
                 persistRemoteShows()
             }
             followedIDs.insert(show.id)
-            if show.tvmazeID != nil {
-                Task { await refreshSchedule(for: show) }
-            } else if show.mediaType == .movie {
+            if show.mediaType == .movie {
                 addMovieRelease(for: show)
+            } else if show.tvmazeID != nil || show.tmdbID != nil || show.anilistID != nil {
+                Task { await refreshSchedule(for: show) }
             }
         }
         UserDefaults.standard.set(Array(followedIDs), forKey: followedKey)
@@ -96,12 +98,21 @@ final class ShowStore: ObservableObject {
     }
 
     func refreshSchedule(for show: Show, includingHistory: Bool = false) async {
-        guard show.tvmazeID != nil, !loadingScheduleIDs.contains(show.id) else { return }
+        guard show.mediaType == .tvShow,
+              show.tvmazeID != nil || show.tmdbID != nil || show.anilistID != nil,
+              !loadingScheduleIDs.contains(show.id) else { return }
         loadingScheduleIDs.insert(show.id)
         defer { loadingScheduleIDs.remove(show.id) }
 
         do {
-            let episodes = try await client.episodes(for: show, includingHistory: includingHistory)
+            let episodes: [Airing]
+            if show.tvmazeID != nil {
+                episodes = try await client.episodes(for: show, includingHistory: includingHistory)
+            } else if show.tmdbID != nil {
+                episodes = try await tmdbClient.episodes(for: show, includingHistory: includingHistory)
+            } else {
+                episodes = try await aniListClient.episodes(for: show, includingHistory: includingHistory)
+            }
             let startOfToday = Calendar.current.startOfDay(for: .now)
             let startOfLastWeek = Calendar.current.date(
                 byAdding: .day,
@@ -126,7 +137,8 @@ final class ShowStore: ObservableObject {
         isRefreshingSchedules = true
         defer { isRefreshingSchedules = false }
 
-        for show in followedShows where show.tvmazeID != nil {
+        for show in followedShows where show.mediaType == .tvShow
+            && (show.tvmazeID != nil || show.tmdbID != nil || show.anilistID != nil) {
             await refreshSchedule(for: show)
         }
     }
@@ -139,7 +151,8 @@ final class ShowStore: ObservableObject {
             isRefreshingSchedules = false
         }
 
-        for show in followedShows where show.tvmazeID != nil {
+        for show in followedShows where show.mediaType == .tvShow
+            && (show.tvmazeID != nil || show.tmdbID != nil || show.anilistID != nil) {
             await refreshSchedule(for: show, includingHistory: true)
         }
     }
@@ -270,7 +283,8 @@ private enum DemoData {
         Show(id: 111, tvmazeID: nil, title: "The Batman", network: "Warner Bros.", genres: ["Action", "Crime"], imageName: nil, imageURL: URL(string: "https://is1-ssl.mzstatic.com/image/thumb/Video116/v4/f6/7f/d8/f67fd824-b916-253c-61e7-5cbc659b8412/pr_source.lsr/600x900bb.jpg"), tintHex: "B94742", summary: "Batman ventures into Gotham City's underworld when a sadistic killer leaves behind a trail of cryptic clues.", status: "Released", mediaType: .movie, releaseDate: releaseDate(2022, 3, 4), runtime: 176),
         Show(id: 112, tvmazeID: 69956, title: "Frieren: Beyond Journey's End", network: "NTV", genres: ["Anime", "Adventure", "Fantasy"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/479/1198409.jpg"), tintHex: "A9B8E8", summary: "An elven mage retraces the journey she once shared with her companions and learns what their brief lives meant.", status: "To Be Determined"),
         Show(id: 113, tvmazeID: 64632, title: "Solo Leveling", network: "Tokyo MX", genres: ["Anime", "Action", "Fantasy"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/497/1244908.jpg"), tintHex: "6D8CD8", summary: "Humanity's weakest hunter gains a mysterious ability that lets him level up without limit.", status: "Running"),
-        Show(id: 114, tvmazeID: 48450, title: "Jujutsu Kaisen", network: "MBS", genres: ["Anime", "Action", "Supernatural"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/608/1521905.jpg"), tintHex: "D56C7C", summary: "A student joins a secret organization of sorcerers after becoming host to a powerful curse.", status: "Running")
+        Show(id: 114, tvmazeID: 48450, title: "Jujutsu Kaisen", network: "MBS", genres: ["Anime", "Action", "Supernatural"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/608/1521905.jpg"), tintHex: "D56C7C", summary: "A student joins a secret organization of sorcerers after becoming host to a powerful curse.", status: "Running"),
+        Show(id: 115, tvmazeID: nil, tmdbID: 1_671_548, title: "Dear You", network: "China", genres: ["Drama", "Family"], imageName: nil, imageURL: URL(string: "https://image.tmdb.org/t/p/w500/rjmhzdVS3Ia535pFawju857e2Na.jpg"), tintHex: "D9AF52", summary: "A grandson travels to Thailand to uncover a family story and find the grandfather he never knew.", status: "Released", mediaType: .movie, releaseDate: releaseDate(2026, 6, 18), runtime: 118)
     ]
 
     static let airings: [Airing] = {

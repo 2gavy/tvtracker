@@ -28,7 +28,13 @@ The prototype uses sample schedule data and bundled TVmaze poster images. Subscr
 
 - **Shows**: one combined TV and movie timeline with a media-type filter; pull firmly past the top to load previous subscribed seasons on demand.
 - **Theme music**: automatically shuffle matching 30-second soundtrack previews across the subscribed lineup, including a large WWE and wider pro-wrestling entrance theme pool, controlled by a single on/off preference in Profile.
-- **Discover**: browse daily-changing trending and personalized recommendation carousels, filter by content type and streaming service, or search TVmaze and Apple's movie catalog, then subscribe with one tap.
+- **Discover**: browse daily-changing trending and personalized recommendation carousels, filter by content type and streaming service, or search TVmaze, AniList, TMDB, and Apple's movie catalog, then subscribe with one tap.
 - **Profile**: manage subscriptions and watched episodes, see total watch time, and control reminders, appearance, and local data.
 
-TV and anime search results plus episode schedules come from TVmaze's free public API. Movie search and metadata use Apple's public Search API. The browse grid also includes a curated starter set of films and anime.
+TV schedules come from TVmaze's free public API, anime metadata and airings come from AniList's free GraphQL API, and movie search also uses Apple's public Search API. The browse grid includes a curated starter set, including *Dear You* (`给阿嬷的情书`).
+
+## Asian catalog
+
+TMDB adds broader Asian drama and film coverage, posters, and known episode dates. Create a free TMDB API Read Access Token, then open **Profile > Catalogs** in the app and paste it there. The token is stored only in the iPhone Keychain and is not written into this repository.
+
+MyDramaList is useful for checking Asian title metadata, but it does not offer a supported public API, so this app does not scrape it. This product uses the TMDB API but is not endorsed or certified by TMDB.

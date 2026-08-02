@@ -6,12 +6,15 @@ struct DiscoverView: View {
     @State private var searchResults: [Show] = []
     @State private var isSearching = false
     @State private var searchError: String?
+    @State private var asianHighlights: [Show] = []
     @State private var mediaFilter: MediaFilter = .all
     @State private var providerFilter = "All services"
 
     private let providers = ["All services", "Netflix", "Apple TV+", "Hulu", "Max", "Disney+", "Prime Video", "HBO"]
     private let client = TVMazeClient()
     private let movieClient = AppleMovieClient()
+    private let tmdbClient = TMDBClient()
+    private let aniListClient = AniListClient()
 
     private var trimmedQuery: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -72,6 +75,9 @@ struct DiscoverView: View {
             .task(id: trimmedQuery) {
                 await search()
             }
+            .task(id: tmdbClient.isConfigured) {
+                await loadAsianHighlights()
+            }
         }
     }
 
@@ -99,6 +105,14 @@ struct DiscoverView: View {
 
                         if !recommendations.isEmpty {
                             RecommendationsCarousel(shows: recommendations)
+                        }
+
+                        let asianMatches = asianHighlights.filter { show in
+                            mediaFilter.includes(show)
+                                && (providerFilter == "All services" || matchesProvider(show.network))
+                        }
+                        if !asianMatches.isEmpty {
+                            AsianHighlightsCarousel(shows: asianMatches)
                         }
                     }
                 }
@@ -165,7 +179,7 @@ struct DiscoverView: View {
     @ViewBuilder
     private var searchContent: some View {
         if isSearching && searchResults.isEmpty {
-            ProgressView("Searching TVmaze")
+            ProgressView("Searching catalogs")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let searchError, searchResults.isEmpty {
             ContentUnavailableView(
@@ -196,7 +210,9 @@ struct DiscoverView: View {
         searchError = nil
         do {
             try await Task.sleep(for: .milliseconds(350))
-            var results: [Show] = []
+            var results = store.shows.filter {
+                $0.title.localizedCaseInsensitiveContains(trimmedQuery)
+            }
             var lastError: Error?
             do {
                 results.append(contentsOf: try await client.searchShows(query: trimmedQuery))
@@ -208,9 +224,27 @@ struct DiscoverView: View {
             } catch {
                 lastError = error
             }
+            if tmdbClient.isConfigured {
+                do {
+                    results.append(contentsOf: try await tmdbClient.search(query: trimmedQuery))
+                } catch {
+                    lastError = error
+                }
+            }
+            do {
+                results.append(contentsOf: try await aniListClient.searchAnime(query: trimmedQuery))
+            } catch {
+                lastError = error
+            }
             if results.isEmpty, let lastError { throw lastError }
             guard !Task.isCancelled else { return }
-            searchResults = results
+            var seen: Set<String> = []
+            searchResults = results.filter { show in
+                let key = "\(show.mediaType.rawValue):\(show.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current))"
+                return mediaFilter.includes(show)
+                    && (providerFilter == "All services" || matchesProvider(show.network))
+                    && seen.insert(key).inserted
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -219,6 +253,18 @@ struct DiscoverView: View {
             searchError = error.localizedDescription
         }
         isSearching = false
+    }
+
+    private func loadAsianHighlights() async {
+        guard tmdbClient.isConfigured else {
+            asianHighlights = []
+            return
+        }
+        do {
+            asianHighlights = try await tmdbClient.discoverAsianTitles()
+        } catch {
+            asianHighlights = []
+        }
     }
 }
 
@@ -303,6 +349,27 @@ private struct RecommendationsCarousel: View {
                 LazyHStack(spacing: 12) {
                     ForEach(shows) { show in
                         RecommendationCard(show: show)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.viewAligned)
+        }
+    }
+}
+
+private struct AsianHighlightsCarousel: View {
+    let shows: [Show]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Text("Across Asia")
+                .font(.title3.weight(.bold))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 13) {
+                    ForEach(shows) { show in
+                        TrendingCard(show: show)
                     }
                 }
                 .scrollTargetLayout()

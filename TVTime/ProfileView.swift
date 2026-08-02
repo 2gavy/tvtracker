@@ -40,12 +40,71 @@ struct ProfileView: View {
                 }
 
                 Section("Data") {
-                    LabeledContent("Schedule", value: "TVmaze")
+                    NavigationLink {
+                        CatalogSourcesView()
+                    } label: {
+                        LabeledContent("Catalogs", value: TMDBClient().isConfigured ? "4 active" : "3 active")
+                    }
                     LabeledContent("Stored", value: "On this iPhone")
                 }
             }
             .navigationTitle("Profile")
         }
+    }
+}
+
+private struct CatalogSourcesView: View {
+    @State private var token = ""
+    @State private var isConnected = TMDBClient().isConfigured
+
+    var body: some View {
+        Form {
+            Section("Included") {
+                LabeledContent("TVmaze", value: "TV schedules")
+                LabeledContent("AniList", value: "Anime")
+                LabeledContent("Apple", value: "Movies")
+            }
+
+            Section {
+                SecureField("TMDB read access token", text: $token)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                Button(isConnected ? "Update TMDB connection" : "Connect TMDB") {
+                    isConnected = TMDBCredentials.saveToken(token)
+                    token = ""
+                }
+                .disabled(token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                if isConnected {
+                    Button("Disconnect TMDB", role: .destructive) {
+                        TMDBCredentials.deleteToken()
+                        isConnected = false
+                    }
+                }
+
+                Link("Get a free TMDB token", destination: URL(string: "https://www.themoviedb.org/settings/api")!)
+            } header: {
+                Text("Asian dramas and films")
+            } footer: {
+                Text("The token stays in this iPhone's Keychain and is never saved in the project.")
+            }
+
+            Section {
+                HStack(spacing: 14) {
+                    Image("TMDBLogo")
+                        .resizable()
+                        .scaledToFit()
+                    .frame(width: 72, height: 28)
+
+                    Text("This product uses the TMDB API but is not endorsed or certified by TMDB.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Catalogs")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

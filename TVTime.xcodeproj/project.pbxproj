@@ -20,6 +20,8 @@
 		A1000000000000000000000B /* TVMazeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* TVMazeClient.swift */; };
 		A1000000000000000000000C /* AppleMovieClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* AppleMovieClient.swift */; };
 		A1000000000000000000000D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* Assets.xcassets */; };
+		A1000000000000000000000E /* TMDBClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* TMDBClient.swift */; };
+		A1000000000000000000000F /* AniListClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* AniListClient.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +40,8 @@
 		B1000000000000000000000D /* Posters */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Posters; sourceTree = "<group>"; };
 		B1000000000000000000000E /* TVMazeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVMazeClient.swift; sourceTree = "<group>"; };
 		B1000000000000000000000F /* AppleMovieClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleMovieClient.swift; sourceTree = "<group>"; };
+		B10000000000000000000010 /* TMDBClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TMDBClient.swift; sourceTree = "<group>"; };
+		B10000000000000000000011 /* AniListClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AniListClient.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,6 +78,8 @@
 				B10000000000000000000009 /* ProfileView.swift */,
 				B1000000000000000000000E /* TVMazeClient.swift */,
 				B1000000000000000000000F /* AppleMovieClient.swift */,
+				B10000000000000000000010 /* TMDBClient.swift */,
+				B10000000000000000000011 /* AniListClient.swift */,
 				B1000000000000000000000A /* Assets.xcassets */,
 				B1000000000000000000000D /* Posters */,
 			);
@@ -169,6 +175,8 @@
 				A10000000000000000000009 /* ProfileView.swift in Sources */,
 				A1000000000000000000000B /* TVMazeClient.swift in Sources */,
 				A1000000000000000000000C /* AppleMovieClient.swift in Sources */,
+				A1000000000000000000000E /* TMDBClient.swift in Sources */,
+				A1000000000000000000000F /* AniListClient.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
