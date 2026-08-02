@@ -9,6 +9,7 @@ struct DiscoverView: View {
     @State private var asianHighlights: [Show] = []
     @State private var mediaFilter: MediaFilter = .all
     @State private var providerFilter = "All services"
+    @State private var selectedShow: Show?
 
     private let providers = ["All services", "Netflix", "Apple TV+", "Hulu", "Max", "Disney+", "Prime Video", "HBO"]
     private let client = TVMazeClient()
@@ -79,6 +80,9 @@ struct DiscoverView: View {
                 await loadAsianHighlights()
             }
         }
+        .fullScreenCover(item: $selectedShow) { show in
+            ShowDetailView(show: show)
+        }
     }
 
     private var browseContent: some View {
@@ -100,11 +104,11 @@ struct DiscoverView: View {
                             )
                             .frame(maxWidth: .infinity)
                         } else {
-                            TrendingCarousel(shows: shows)
+                            TrendingCarousel(shows: shows, onSelect: { selectedShow = $0 })
                         }
 
                         if !recommendations.isEmpty {
-                            RecommendationsCarousel(shows: recommendations)
+                            RecommendationsCarousel(shows: recommendations, onSelect: { selectedShow = $0 })
                         }
 
                         let asianMatches = asianHighlights.filter { show in
@@ -112,7 +116,7 @@ struct DiscoverView: View {
                                 && (providerFilter == "All services" || matchesProvider(show.network))
                         }
                         if !asianMatches.isEmpty {
-                            AsianHighlightsCarousel(shows: asianMatches)
+                            AsianHighlightsCarousel(shows: asianMatches, onSelect: { selectedShow = $0 })
                         }
                     }
                 }
@@ -191,7 +195,7 @@ struct DiscoverView: View {
             ContentUnavailableView.search(text: trimmedQuery)
         } else {
             List(searchResults) { show in
-                SearchResultRow(show: show)
+                SearchResultRow(show: show, onSelect: { selectedShow = $0 })
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
@@ -282,6 +286,7 @@ private struct DailyRandomNumberGenerator: RandomNumberGenerator {
 
 private struct TrendingCarousel: View {
     let shows: [Show]
+    let onSelect: (Show) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
@@ -291,7 +296,7 @@ private struct TrendingCarousel: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 13) {
                     ForEach(shows) { show in
-                        TrendingCard(show: show)
+                        TrendingCard(show: show, onSelect: onSelect)
                     }
                 }
                 .scrollTargetLayout()
@@ -304,6 +309,7 @@ private struct TrendingCarousel: View {
 private struct TrendingCard: View {
     @EnvironmentObject private var store: ShowStore
     let show: Show
+    let onSelect: (Show) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -334,11 +340,15 @@ private struct TrendingCard: View {
             }
         }
         .frame(width: 132)
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect(show) }
+        .accessibilityAction(named: "Show details") { onSelect(show) }
     }
 }
 
 private struct RecommendationsCarousel: View {
     let shows: [Show]
+    let onSelect: (Show) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -348,7 +358,7 @@ private struct RecommendationsCarousel: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 12) {
                     ForEach(shows) { show in
-                        RecommendationCard(show: show)
+                        RecommendationCard(show: show, onSelect: onSelect)
                     }
                 }
                 .scrollTargetLayout()
@@ -360,6 +370,7 @@ private struct RecommendationsCarousel: View {
 
 private struct AsianHighlightsCarousel: View {
     let shows: [Show]
+    let onSelect: (Show) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
@@ -369,7 +380,7 @@ private struct AsianHighlightsCarousel: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 13) {
                     ForEach(shows) { show in
-                        TrendingCard(show: show)
+                        TrendingCard(show: show, onSelect: onSelect)
                     }
                 }
                 .scrollTargetLayout()
@@ -382,6 +393,7 @@ private struct AsianHighlightsCarousel: View {
 private struct RecommendationCard: View {
     @EnvironmentObject private var store: ShowStore
     let show: Show
+    let onSelect: (Show) -> Void
 
     var body: some View {
         HStack(spacing: 11) {
@@ -421,12 +433,16 @@ private struct RecommendationCard: View {
         .frame(width: 268, height: 134)
         .background(Color(uiColor: .secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 7))
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect(show) }
+        .accessibilityAction(named: "Show details") { onSelect(show) }
     }
 }
 
 private struct SearchResultRow: View {
     @EnvironmentObject private var store: ShowStore
     let show: Show
+    let onSelect: (Show) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -468,5 +484,141 @@ private struct SearchResultRow: View {
         }
         .padding(.vertical, 3)
         .listRowBackground(Color(uiColor: .systemBackground))
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect(show) }
+        .accessibilityAction(named: "Show details") { onSelect(show) }
+    }
+}
+
+private struct ShowDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: ShowStore
+    let show: Show
+
+    private var releaseText: String? {
+        guard let releaseDate = show.releaseDate else { return nil }
+        return releaseDate.formatted(.dateTime.day().month(.abbreviated).year())
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    DetailPoster(show: show)
+                        .containerRelativeFrame(.horizontal)
+                        .containerRelativeFrame(.vertical) { length, _ in
+                            length * 0.48
+                        }
+
+                    VStack(alignment: .leading, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(show.title)
+                                .font(.largeTitle.weight(.bold))
+                                .foregroundStyle(.white)
+
+                            HStack(spacing: 7) {
+                                Label(show.mediaType == .movie ? "Movie" : "Series", systemImage: show.mediaType.systemImage)
+                                if let releaseText { Text(releaseText) }
+                                if show.runtime > 0 { Text("\(show.runtime) min") }
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.68))
+
+                            Text(show.network)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AppTheme.accent)
+
+                            if !show.genres.isEmpty {
+                                Text(show.genres.joined(separator: "  ·  "))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.white.opacity(0.72))
+                            }
+                        }
+
+                        Divider().overlay(.white.opacity(0.18))
+
+                        VStack(alignment: .leading, spacing: 9) {
+                            Text("Synopsis")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(.white)
+                            Text(show.summary)
+                                .font(.body)
+                                .foregroundStyle(.white.opacity(0.82))
+                                .lineSpacing(5)
+                        }
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.top, 24)
+                    .padding(.bottom, 130)
+                }
+            }
+            .scrollIndicators(.hidden)
+
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.body.weight(.bold))
+                    .frame(width: 42, height: 42)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .padding(.top, 12)
+            .padding(.trailing, 16)
+            .accessibilityLabel("Close details")
+        }
+        .safeAreaInset(edge: .bottom) {
+            Button {
+                withAnimation(.snappy) { store.toggleFollow(show) }
+            } label: {
+                Label(
+                    store.isFollowing(show) ? "Subscribed" : "Subscribe",
+                    systemImage: store.isFollowing(show) ? "checkmark" : "plus"
+                )
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppTheme.accent)
+            .foregroundStyle(.black)
+            .padding(.horizontal, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+            .background(.ultraThinMaterial)
+        }
+        .statusBarHidden()
+    }
+}
+
+private struct DetailPoster: View {
+    let show: Show
+
+    var body: some View {
+        ZStack {
+            Color(hex: show.tintHex).opacity(0.18)
+
+            if let imageName = show.imageName,
+               let path = Bundle.main.path(forResource: imageName, ofType: "jpg", inDirectory: "Posters"),
+               let poster = UIImage(contentsOfFile: path) {
+                Image(uiImage: poster)
+                    .resizable()
+                    .scaledToFit()
+            } else if let imageURL = show.imageURL {
+                AsyncImage(url: imageURL) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFit()
+                    } else {
+                        ProgressView().tint(AppTheme.accent)
+                    }
+                }
+            } else {
+                Image(systemName: "play.tv")
+                    .font(.system(size: 54))
+                    .foregroundStyle(Color(hex: show.tintHex))
+            }
+        }
     }
 }
