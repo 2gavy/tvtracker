@@ -1,0 +1,15 @@
+DerivedData/
+work/
+build/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+
+# Local configuration and credentials
+.env
+.env.*
+*.mobileprovision
+*.p12
+*.cer
+*.pem
+*.key
