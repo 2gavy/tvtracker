@@ -2,6 +2,20 @@
 
 A subscription-first SwiftUI prototype for following upcoming TV episodes.
 
+## Motivation
+
+This project began after the announcement that TV Time would shut down on July 15, 2026. Whip Media said the free consumer app was no longer sustainable, while [TechCrunch reported that the company was shifting its focus toward enterprise AI products](https://techcrunch.com/2026/07/02/popular-tv-tracking-app-tv-time-is-shutting-down-as-company-focuses-on-ai/).
+
+For people who depended on TV Time to remember what airs next, the loss is practical as much as nostalgic. This prototype asks a simple question: can a small, subscription-first iOS app preserve that core experience with free public data sources, a fast chronological feed, and local-first tracking?
+
+This is an independent prototype and is not affiliated with or endorsed by TV Time or Whip Media.
+
+## Screenshots
+
+| The shutdown notice | A subscription-first rebuild |
+| --- | --- |
+| [![TV Time shutdown notice](docs/tv-time-shutdown.jpeg)](docs/tv-time-shutdown.jpeg) | [![TV Time prototype showing last week's episodes and theme music](docs/tv-time-reborn.jpeg)](docs/tv-time-reborn.jpeg) |
+
 ## Open
 
 1. Open `TVTime.xcodeproj` in Xcode 16 or newer.
