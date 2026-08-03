@@ -62,6 +62,11 @@ struct ShowsView: View {
                     timelineIndex = anchorSectionIndex(in: updated) ?? 0
                     scrollToPresent(proxy, sections: updated, animated: true)
                 }
+                .onChange(of: store.timeZoneIdentifier) {
+                    let updated = store.sections(matching: mediaFilter)
+                    timelineIndex = anchorSectionIndex(in: updated) ?? 0
+                    scrollToPresent(proxy, sections: updated, animated: true)
+                }
                 .onChange(of: store.isRefreshingSchedules) { _, isRefreshing in
                     if !isRefreshing {
                         scrollToPresent(
@@ -204,7 +209,7 @@ struct ShowsView: View {
         if let thisWeek = sections.first(where: { $0.title == "This week" }) { return thisWeek.id }
         if let today = sections.first(where: { $0.title == "Today" }) { return today.id }
 
-        let startOfToday = Calendar.current.startOfDay(for: .now)
+        let startOfToday = store.calendar.startOfDay(for: .now)
         if let next = sections.first(where: { section in
             section.airings.compactMap(\.airDate).min().map { $0 >= startOfToday } ?? false
         }) {
@@ -401,7 +406,7 @@ struct AiringRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
                     if let date = airing.airDate {
-                        Text(date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
+                        Text(store.formattedScheduleDate(date))
                             .font(.caption.weight(.bold))
                             .foregroundStyle(AppTheme.accent)
                     } else {

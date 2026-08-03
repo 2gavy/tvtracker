@@ -2,6 +2,8 @@ import Foundation
 
 @MainActor
 final class ShowStore: ObservableObject {
+    static let defaultTimeZoneIdentifier = "Asia/Singapore"
+
     @Published private(set) var followedIDs: Set<Int>
     @Published private(set) var watchedAiringIDs: Set<Int>
     @Published private(set) var loadingScheduleIDs: Set<Int> = []
@@ -10,16 +12,33 @@ final class ShowStore: ObservableObject {
 
     @Published private(set) var shows: [Show]
     @Published private(set) var airings: [Airing]
+    @Published var timeZoneIdentifier: String {
+        didSet {
+            guard TimeZone(identifier: timeZoneIdentifier) != nil else {
+                timeZoneIdentifier = Self.defaultTimeZoneIdentifier
+                return
+            }
+            UserDefaults.standard.set(timeZoneIdentifier, forKey: timeZoneKey)
+        }
+    }
 
     private let followedKey = "followedShowIDs"
     private let watchedKey = "watchedAiringIDs"
     private let savedShowsKey = "savedTVMazeShows"
     private let savedAiringsKey = "savedTVMazeAirings"
+    private let timeZoneKey = "scheduleTimeZoneIdentifier"
     private let client = TVMazeClient()
     private let tmdbClient = TMDBClient()
     private let aniListClient = AniListClient()
 
     init() {
+        let savedTimeZone = UserDefaults.standard.string(forKey: timeZoneKey)
+        if let savedTimeZone, TimeZone(identifier: savedTimeZone) != nil {
+            timeZoneIdentifier = savedTimeZone
+        } else {
+            timeZoneIdentifier = Self.defaultTimeZoneIdentifier
+        }
+
         let savedShows: [Show] = Self.load([Show].self, key: savedShowsKey) ?? []
         let savedAirings: [Airing] = Self.load([Airing].self, key: savedAiringsKey) ?? []
         shows = DemoData.shows + savedShows.filter { saved in
@@ -67,6 +86,25 @@ final class ShowStore: ObservableObject {
         return "\(hours)h \(minutes)m"
     }
 
+    var timeZone: TimeZone {
+        TimeZone(identifier: timeZoneIdentifier)
+            ?? TimeZone(identifier: Self.defaultTimeZoneIdentifier)!
+    }
+
+    var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar
+    }
+
+    func formattedScheduleDate(_ date: Date) -> String {
+        formatted(date, template: "EEE d MMM")
+    }
+
+    func formattedReleaseDate(_ date: Date) -> String {
+        formatted(date, template: "d MMM yyyy")
+    }
+
     func show(for id: Int) -> Show {
         shows.first { $0.id == id } ?? shows[0]
     }
@@ -107,14 +145,26 @@ final class ShowStore: ObservableObject {
         do {
             let episodes: [Airing]
             if show.tvmazeID != nil {
-                episodes = try await client.episodes(for: show, includingHistory: includingHistory)
+                episodes = try await client.episodes(
+                    for: show,
+                    includingHistory: includingHistory,
+                    timeZone: timeZone
+                )
             } else if show.tmdbID != nil {
-                episodes = try await tmdbClient.episodes(for: show, includingHistory: includingHistory)
+                episodes = try await tmdbClient.episodes(
+                    for: show,
+                    includingHistory: includingHistory,
+                    timeZone: timeZone
+                )
             } else {
-                episodes = try await aniListClient.episodes(for: show, includingHistory: includingHistory)
+                episodes = try await aniListClient.episodes(
+                    for: show,
+                    includingHistory: includingHistory,
+                    timeZone: timeZone
+                )
             }
-            let startOfToday = Calendar.current.startOfDay(for: .now)
-            let startOfLastWeek = Calendar.current.date(
+            let startOfToday = calendar.startOfDay(for: .now)
+            let startOfLastWeek = calendar.date(
                 byAdding: .day,
                 value: -7,
                 to: startOfToday
@@ -171,8 +221,8 @@ final class ShowStore: ObservableObject {
     }
 
     func sections(matching filter: MediaFilter = .all) -> [AiringSection] {
-        let startOfToday = Calendar.current.startOfDay(for: .now)
-        let startOfLastWeek = Calendar.current.date(
+        let startOfToday = calendar.startOfDay(for: .now)
+        let startOfLastWeek = calendar.date(
             byAdding: .day,
             value: -7,
             to: startOfToday
@@ -192,7 +242,6 @@ final class ShowStore: ObservableObject {
             }
         }
 
-        let calendar = Calendar.current
         let grouped = Dictionary(grouping: sorted) { airing -> String in
             guard let date = airing.airDate else { return "Date TBA" }
             if date >= startOfLastWeek, date < startOfToday { return "Last week" }
@@ -202,7 +251,7 @@ final class ShowStore: ObservableObject {
                date < calendar.date(byAdding: .day, value: 7, to: startOfToday)! {
                 return "This week"
             }
-            return date.formatted(.dateTime.month(.wide).year())
+            return formatted(date, template: "MMMM yyyy")
         }
 
         return grouped.map { key, value in
@@ -232,6 +281,14 @@ final class ShowStore: ObservableObject {
         let demoIDs = Set(DemoData.shows.map(\.id))
         let remote = shows.filter { !demoIDs.contains($0.id) }
         Self.save(remote, key: savedShowsKey)
+    }
+
+    private func formatted(_ date: Date, template: String) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = .autoupdatingCurrent
+        formatter.timeZone = timeZone
+        formatter.setLocalizedDateFormatFromTemplate(template)
+        return formatter.string(from: date)
     }
 
     private func addMovieRelease(for show: Show) {

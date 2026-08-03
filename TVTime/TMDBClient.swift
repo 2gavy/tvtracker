@@ -63,7 +63,11 @@ struct TMDBClient {
         return mixed
     }
 
-    func episodes(for show: Show, includingHistory: Bool = false) async throws -> [Airing] {
+    func episodes(
+        for show: Show,
+        includingHistory: Bool = false,
+        timeZone: TimeZone = .current
+    ) async throws -> [Airing] {
         guard let tmdbID = show.tmdbID, show.mediaType == .tvShow else { return [] }
         let details: TVDetails = try await get("tv/\(tmdbID)")
         let numberedSeasons = details.seasons.filter { $0.seasonNumber > 0 }
@@ -97,8 +101,10 @@ struct TMDBClient {
             })
         }
 
-        let startOfToday = Calendar.current.startOfDay(for: .now)
-        let startOfLastWeek = Calendar.current.date(byAdding: .day, value: -7, to: startOfToday)!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let startOfToday = calendar.startOfDay(for: .now)
+        let startOfLastWeek = calendar.date(byAdding: .day, value: -7, to: startOfToday)!
         let requested = includingHistory ? episodes : episodes.filter {
             guard let date = $0.airDate else { return true }
             return date >= startOfLastWeek

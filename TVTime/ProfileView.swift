@@ -26,6 +26,17 @@ struct ProfileView: View {
                     LabeledContent("Watched hours", value: store.watchedDuration)
                 }
 
+                Section("Schedule") {
+                    NavigationLink {
+                        TimeZonePickerView(selection: $store.timeZoneIdentifier)
+                    } label: {
+                        LabeledContent(
+                            "Time zone",
+                            value: TimeZonePickerView.displayName(for: store.timeZoneIdentifier)
+                        )
+                    }
+                }
+
                 Section("Notifications") {
                     Toggle("Episode reminders", isOn: $reminders)
                     Toggle("Hide episode titles until aired", isOn: $spoilerProtection)
@@ -50,6 +61,112 @@ struct ProfileView: View {
             }
             .navigationTitle("Profile")
         }
+    }
+}
+
+private struct TimeZonePickerView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var selection: String
+    @State private var searchText = ""
+
+    private static let recommendedIdentifiers = [
+        "Asia/Singapore",
+        "Asia/Tokyo",
+        "Asia/Seoul",
+        "Asia/Hong_Kong",
+        "Asia/Shanghai",
+        "Asia/Bangkok",
+        "Asia/Kolkata",
+        "Australia/Sydney",
+        "Europe/London",
+        "America/New_York",
+        "America/Los_Angeles"
+    ]
+
+    private var matchingIdentifiers: [String] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            return TimeZone.knownTimeZoneIdentifiers.filter {
+                !Self.recommendedIdentifiers.contains($0)
+            }
+        }
+        return TimeZone.knownTimeZoneIdentifiers.filter { identifier in
+            identifier.localizedCaseInsensitiveContains(query)
+                || Self.displayName(for: identifier).localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        List {
+            if searchText.isEmpty {
+                Section("Recommended") {
+                    ForEach(Self.recommendedIdentifiers, id: \.self) { identifier in
+                        timeZoneRow(identifier)
+                    }
+                }
+            }
+
+            Section(searchText.isEmpty ? "All time zones" : "Results") {
+                ForEach(matchingIdentifiers, id: \.self) { identifier in
+                    timeZoneRow(identifier)
+                }
+            }
+        }
+        .navigationTitle("Time Zone")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, prompt: "Search city or region")
+    }
+
+    @ViewBuilder
+    private func timeZoneRow(_ identifier: String) -> some View {
+        Button {
+            selection = identifier
+            dismiss()
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(Self.displayName(for: identifier))
+                        .foregroundStyle(.primary)
+                    Text(identifier.replacingOccurrences(of: "_", with: " "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Text(Self.offsetText(for: identifier))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+
+                if selection == identifier {
+                    Image(systemName: "checkmark")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(AppTheme.accent)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    static func displayName(for identifier: String) -> String {
+        identifier
+            .split(separator: "/")
+            .last
+            .map(String.init)?
+            .replacingOccurrences(of: "_", with: " ")
+            ?? identifier
+    }
+
+    private static func offsetText(for identifier: String) -> String {
+        guard let timeZone = TimeZone(identifier: identifier) else { return "GMT" }
+        let totalMinutes = timeZone.secondsFromGMT(for: .now) / 60
+        let sign = totalMinutes >= 0 ? "+" : "-"
+        let hours = abs(totalMinutes) / 60
+        let minutes = abs(totalMinutes) % 60
+        return minutes == 0
+            ? "GMT\(sign)\(hours)"
+            : String(format: "GMT%@%d:%02d", sign, hours, minutes)
     }
 }
 

@@ -126,7 +126,7 @@ struct DiscoverView: View {
     }
 
     private func trendingShows(for date: Date) -> [Show] {
-        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        let components = store.calendar.dateComponents([.year, .month, .day], from: date)
         let daySeed = UInt64(
             (components.year ?? 0) * 10_000
                 + (components.month ?? 0) * 100
@@ -149,7 +149,7 @@ struct DiscoverView: View {
         let followedGenres = followed.flatMap(\.genres)
         let genreWeights = Dictionary(followedGenres.map { ($0.lowercased(), 1) }, uniquingKeysWith: +)
         let followedNetworks = Set(followed.map { $0.network.lowercased() })
-        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        let components = store.calendar.dateComponents([.year, .month, .day], from: date)
         let daySeed = UInt64(
             (components.year ?? 0) * 10_000
                 + (components.month ?? 0) * 100
@@ -497,7 +497,7 @@ private struct ShowDetailView: View {
 
     private var releaseText: String? {
         guard let releaseDate = show.releaseDate else { return nil }
-        return releaseDate.formatted(.dateTime.day().month(.abbreviated).year())
+        return store.formattedReleaseDate(releaseDate)
     }
 
     var body: some View {

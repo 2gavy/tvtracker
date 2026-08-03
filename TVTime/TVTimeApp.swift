@@ -9,6 +9,7 @@ struct TVTimeApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(store)
+                .environment(\.timeZone, store.timeZone)
                 .preferredColorScheme(darkModeEnabled ? .dark : .light)
         }
     }

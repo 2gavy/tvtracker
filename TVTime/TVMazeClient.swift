@@ -47,7 +47,11 @@ struct TVMazeClient {
         }
     }
 
-    func episodes(for show: Show, includingHistory: Bool = false) async throws -> [Airing] {
+    func episodes(
+        for show: Show,
+        includingHistory: Bool = false,
+        timeZone: TimeZone = .current
+    ) async throws -> [Airing] {
         guard let tvmazeID = show.tvmazeID,
               let url = URL(string: "https://api.tvmaze.com/shows/\(tvmazeID)/episodes") else {
             return []
@@ -56,7 +60,7 @@ struct TVMazeClient {
         let data = try await request(url)
         let episodes = try decoder.decode([EpisodeDTO].self, from: data)
         let mapped = episodes.map { item in
-            let date = airDate(for: item)
+            let date = airDate(for: item, timeZone: timeZone)
             return Airing(
                 id: episodeIDOffset + item.id,
                 showID: show.id,
@@ -70,8 +74,10 @@ struct TVMazeClient {
         }
         .sorted { ($0.airDate ?? .distantFuture) < ($1.airDate ?? .distantFuture) }
 
-        let startOfToday = Calendar.current.startOfDay(for: .now)
-        let startOfLastWeek = Calendar.current.date(
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let startOfToday = calendar.startOfDay(for: .now)
+        let startOfLastWeek = calendar.date(
             byAdding: .day,
             value: -7,
             to: startOfToday
@@ -109,7 +115,7 @@ struct TVMazeClient {
         return data
     }
 
-    private func airDate(for episode: EpisodeDTO) -> Date? {
+    private func airDate(for episode: EpisodeDTO, timeZone: TimeZone) -> Date? {
         if let stamp = episode.airstamp {
             let formatter = ISO8601DateFormatter()
             if let date = formatter.date(from: stamp) { return date }
@@ -117,6 +123,7 @@ struct TVMazeClient {
         guard let value = episode.airdate else { return nil }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.date(from: value)
     }

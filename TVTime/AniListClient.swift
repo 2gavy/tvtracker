@@ -54,7 +54,11 @@ struct AniListClient {
         }
     }
 
-    func episodes(for show: Show, includingHistory: Bool = false) async throws -> [Airing] {
+    func episodes(
+        for show: Show,
+        includingHistory: Bool = false,
+        timeZone: TimeZone = .current
+    ) async throws -> [Airing] {
         guard let anilistID = show.anilistID, show.mediaType == .tvShow else { return [] }
         let queryDocument = """
         query ($id: Int) {
@@ -68,8 +72,10 @@ struct AniListClient {
         """
         let payload: SchedulePayload = try await request(query: queryDocument, variables: ["id": anilistID])
         let media = payload.data.media
-        let startOfToday = Calendar.current.startOfDay(for: .now)
-        let startOfLastWeek = Calendar.current.date(byAdding: .day, value: -7, to: startOfToday)!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let startOfToday = calendar.startOfDay(for: .now)
+        let startOfLastWeek = calendar.date(byAdding: .day, value: -7, to: startOfToday)!
         var nodes = media.airingSchedule.nodes
         if let next = media.nextAiringEpisode, !nodes.contains(where: { $0.id == next.id }) {
             nodes.append(next)
