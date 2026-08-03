@@ -3,11 +3,6 @@ import SwiftUI
 struct ShowsView: View {
     @EnvironmentObject private var store: ShowStore
     @State private var mediaFilter: MediaFilter = .all
-    @State private var timelineIndex = 0
-    @State private var isScrubbingTimeline = false
-    @State private var isTimelineVisible = false
-    @State private var isAtScheduleBottom = false
-    @State private var timelineHideTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -29,22 +24,12 @@ struct ShowsView: View {
                             } header: {
                                 SectionHeader(section: section)
                                     .id(section.id)
-                                    .background {
-                                        GeometryReader { geometry in
-                                            Color.clear.preference(
-                                                key: SectionPositionPreferenceKey.self,
-                                                value: [section.id: geometry.frame(in: .named("shows-scroll")).minY]
-                                            )
-                                        }
-                                    }
                             }
                         }
                     }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .coordinateSpace(name: "shows-scroll")
-                .contentMargins(.trailing, showsTimeline(sections) ? 16 : 0, for: .scrollContent)
                 .animation(.snappy, value: mediaFilter)
                 .refreshable {
                     if !store.hasLoadedHistory {
@@ -55,16 +40,13 @@ struct ShowsView: View {
                 }
                 .onAppear {
                     scrollToPresent(proxy, sections: sections, animated: false)
-                    timelineIndex = anchorSectionIndex(in: sections) ?? 0
                 }
                 .onChange(of: mediaFilter) {
                     let updated = store.sections(matching: mediaFilter)
-                    timelineIndex = anchorSectionIndex(in: updated) ?? 0
                     scrollToPresent(proxy, sections: updated, animated: true)
                 }
                 .onChange(of: store.timeZoneIdentifier) {
                     let updated = store.sections(matching: mediaFilter)
-                    timelineIndex = anchorSectionIndex(in: updated) ?? 0
                     scrollToPresent(proxy, sections: updated, animated: true)
                 }
                 .onChange(of: store.isRefreshingSchedules) { _, isRefreshing in
@@ -76,59 +58,6 @@ struct ShowsView: View {
                         )
                     }
                 }
-                .onPreferenceChange(SectionPositionPreferenceKey.self) { positions in
-                    guard !isScrubbingTimeline, !isAtScheduleBottom,
-                          let nearest = positions.min(by: { abs($0.value) < abs($1.value) }),
-                          let index = sections.firstIndex(where: { $0.id == nearest.key }) else { return }
-                    timelineIndex = index
-                }
-                .modifier(ScrollActivityModifier { isScrolling in
-                    if isScrolling {
-                        revealTimeline()
-                    } else {
-                        scheduleTimelineHide()
-                    }
-                })
-                .modifier(ScrollBottomModifier { isAtBottom in
-                    if isAtBottom {
-                        isAtScheduleBottom = true
-                        guard !isScrubbingTimeline, !sections.isEmpty else { return }
-                        timelineIndex = sections.count - 1
-                    } else if !isScrubbingTimeline {
-                        isAtScheduleBottom = false
-                    }
-                })
-                .overlay(alignment: .trailing) {
-                    if showsTimeline(sections) && isTimelineVisible {
-                        TimelineScrubber(
-                            sections: sections,
-                            selectedIndex: timelineIndex,
-                            onScrubbingChanged: { isScrubbing in
-                                isScrubbingTimeline = isScrubbing
-                                if isScrubbing {
-                                    revealTimeline()
-                                } else {
-                                    scheduleTimelineHide()
-                                }
-                            },
-                            onSelect: { index, animated in
-                                guard sections.indices.contains(index) else { return }
-                                timelineIndex = index
-                                isAtScheduleBottom = index == sections.count - 1
-                                if animated {
-                                    withAnimation(.snappy) {
-                                        proxy.scrollTo(sections[index].id, anchor: .top)
-                                    }
-                                } else {
-                                    proxy.scrollTo(sections[index].id, anchor: .top)
-                                }
-                            }
-                        )
-                        .padding(.trailing, 11)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
-                }
-                .animation(.easeOut(duration: 0.2), value: isTimelineVisible)
             }
             .background(Color(uiColor: .systemBackground))
             .navigationTitle("TV Time")
@@ -182,29 +111,6 @@ struct ShowsView: View {
         }
     }
 
-    private func showsTimeline(_ sections: [AiringSection]) -> Bool {
-        sections.count > 2 && sections.reduce(0) { $0 + $1.airings.count } > 6
-    }
-
-    private func revealTimeline() {
-        timelineHideTask?.cancel()
-        if !isTimelineVisible { isTimelineVisible = true }
-    }
-
-    private func scheduleTimelineHide() {
-        timelineHideTask?.cancel()
-        timelineHideTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(1_600))
-            guard !Task.isCancelled, !isScrubbingTimeline else { return }
-            isTimelineVisible = false
-        }
-    }
-
-    private func anchorSectionIndex(in sections: [AiringSection]) -> Int? {
-        guard let id = anchorSectionID(in: sections) else { return nil }
-        return sections.firstIndex { $0.id == id }
-    }
-
     private func anchorSectionID(in sections: [AiringSection]) -> String? {
         if let thisWeek = sections.first(where: { $0.title == "This week" }) { return thisWeek.id }
         if let today = sections.first(where: { $0.title == "Today" }) { return today.id }
@@ -218,154 +124,6 @@ struct ShowsView: View {
 
         return sections.last(where: { !$0.airings.compactMap(\.airDate).isEmpty })?.id
             ?? sections.first?.id
-    }
-}
-
-private struct SectionPositionPreferenceKey: PreferenceKey {
-    static var defaultValue: [String: CGFloat] = [:]
-
-    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, newest in newest })
-    }
-}
-
-private struct ScrollActivityModifier: ViewModifier {
-    let onChange: (Bool) -> Void
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content.onScrollPhaseChange { _, phase in
-                onChange(phase.isScrolling)
-            }
-        } else {
-            content.simultaneousGesture(
-                DragGesture(minimumDistance: 3)
-                    .onChanged { value in
-                        guard abs(value.translation.height) > abs(value.translation.width) else { return }
-                        onChange(true)
-                    }
-                    .onEnded { _ in onChange(false) }
-            )
-        }
-    }
-}
-
-private struct ScrollBottomModifier: ViewModifier {
-    let onChange: (Bool) -> Void
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content.onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.visibleRect.maxY >= geometry.contentSize.height + geometry.contentInsets.bottom - 12
-            } action: { _, isAtBottom in
-                onChange(isAtBottom)
-            }
-        } else {
-            content
-        }
-    }
-}
-
-private struct TimelineScrubber: View {
-    let sections: [AiringSection]
-    let selectedIndex: Int
-    let onScrubbingChanged: (Bool) -> Void
-    let onSelect: (Int, Bool) -> Void
-
-    @State private var isDragging = false
-    private let trackHeight: CGFloat = 218
-    private let thumbSize: CGFloat = 18
-
-    private var safeIndex: Int {
-        min(max(selectedIndex, 0), max(sections.count - 1, 0))
-    }
-
-    private var progress: CGFloat {
-        guard sections.count > 1 else { return 0 }
-        return CGFloat(safeIndex) / CGFloat(sections.count - 1)
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if isDragging {
-                Text(sections[safeIndex].title)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 6)
-                    .background(.regularMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(AppTheme.separator, lineWidth: 0.5)
-                    }
-                    .lineLimit(1)
-                    .transition(.opacity)
-            }
-
-            VStack(spacing: 5) {
-                ZStack(alignment: .top) {
-                    Capsule()
-                        .fill(Color.primary.opacity(0.18))
-                        .frame(width: 3, height: trackHeight)
-
-                    Capsule()
-                        .fill(AppTheme.accent.opacity(0.48))
-                        .frame(width: 3, height: max(thumbSize / 2, progress * trackHeight))
-
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .frame(width: thumbSize, height: thumbSize)
-                        .overlay {
-                            Circle()
-                                .fill(AppTheme.accent.opacity(0.82))
-                                .padding(4)
-                        }
-                        .offset(y: progress * (trackHeight - thumbSize))
-                        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
-                }
-                .frame(width: 24, height: trackHeight)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            if !isDragging {
-                                isDragging = true
-                                onScrubbingChanged(true)
-                            }
-                            let fraction = min(max((value.location.y - thumbSize / 2) / (trackHeight - thumbSize), 0), 1)
-                            let index: Int
-                            if fraction >= 0.84 {
-                                index = sections.count - 1
-                            } else if fraction <= 0.12 {
-                                index = 0
-                            } else {
-                                index = Int((fraction * CGFloat(sections.count - 1)).rounded())
-                            }
-                            if index != safeIndex { onSelect(index, false) }
-                        }
-                        .onEnded { _ in
-                            isDragging = false
-                            onScrubbingChanged(false)
-                        }
-                )
-                .accessibilityRepresentation {
-                    Slider(
-                        value: Binding(
-                            get: { Double(safeIndex) },
-                            set: { onSelect(Int($0.rounded()), true) }
-                        ),
-                        in: 0...Double(sections.count - 1),
-                        step: 1
-                    )
-                    .accessibilityLabel("Schedule timeline")
-                    .accessibilityValue(sections[safeIndex].title)
-                }
-            }
-        }
-        .animation(.easeOut(duration: 0.14), value: isDragging)
     }
 }
 
