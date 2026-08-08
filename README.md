@@ -1,40 +1,39 @@
-# TV Time
+# TV Tracker
 
-A subscription-first SwiftUI prototype for following upcoming TV episodes.
+Never miss the next episode of your shows.
+
+TV Tracker is a paid-upfront SwiftUI app built around one fast chronological list. People subscribe to the shows they care about, see confirmed upcoming dates in their chosen time zone, and mark episodes as watched.
 
 ## Motivation
 
-This project began after the announcement that TV Time would shut down on July 15, 2026. Whip Media said the free consumer app was no longer sustainable, while [TechCrunch reported that the company was shifting its focus toward enterprise AI products](https://techcrunch.com/2026/07/02/popular-tv-tracking-app-tv-time-is-shutting-down-as-company-focuses-on-ai/).
+This project began after the announcement that TV Time would shut down on July 15, 2026. [TechCrunch reported that the company was shifting its focus toward enterprise AI products](https://techcrunch.com/2026/07/02/popular-tv-tracking-app-tv-time-is-shutting-down-as-company-focuses-on-ai/).
 
-For people who depended on TV Time to remember what airs next, the loss is practical as much as nostalgic. This prototype asks a simple question: can a small, subscription-first iOS app preserve that core experience with free public data sources, a fast chronological feed, and local-first tracking?
+TV Tracker is an independent product and is not affiliated with or endorsed by TV Time or Whip Media.
 
-This is an independent prototype and is not affiliated with or endorsed by TV Time or Whip Media.
+## Screenshot
 
-## Screenshots
+[![TV Tracker schedule](docs/tv-time-reborn.jpeg)](docs/tv-time-reborn.jpeg)
 
-| The shutdown notice | A subscription-first rebuild |
-| --- | --- |
-| [![TV Time shutdown notice](docs/tv-time-shutdown.jpeg)](docs/tv-time-shutdown.jpeg) | [![TV Time prototype showing last week's episodes and theme music](docs/tv-time-reborn.jpeg)](docs/tv-time-reborn.jpeg) |
+## Product
 
-## Open
+- **Shows** presents subscribed TV episodes and movie releases in one chronological list.
+- **Discover** searches a broad global TV catalogue, including anime, and surfaces current broadcast and streaming titles.
+- **Settings** manages subscriptions, watched history, time zone, appearance, support, and legal information.
+- Subscriptions and watched history stay private and automatically sync through the user's iCloud account for reinstall recovery. TV Tracker has no separate account, advertising, analytics, or tracking SDK.
+
+TV information and schedule data are provided by [TVmaze](https://www.tvmaze.com) under CC BY-SA. Optional movie and Asian catalogue coverage uses TMDB after commercial access is approved. This product uses the TMDB API but is not endorsed or certified by TMDB.
+
+## Development
 
 1. Open `TVTime.xcodeproj` in Xcode 16 or newer.
 2. Choose an iPhone simulator.
 3. Run the `TVTime` scheme.
 
-The prototype uses sample schedule data and bundled TVmaze poster images. Subscriptions and watched episodes persist in `UserDefaults`.
+TVmaze requires no API key. To test optional TMDB coverage, copy `TVTime/Secrets.xcconfig.example` to `TVTime/Secrets.xcconfig` and add a read access token. `Secrets.xcconfig` is ignored by Git and must never be committed.
 
-## Product shape
+Do not enable TMDB in a paid release until commercial permission is confirmed. The complete release gates are in [APP_STORE_CHECKLIST.md](APP_STORE_CHECKLIST.md).
 
-- **Shows**: one combined TV and movie timeline with a media-type filter; pull firmly past the top to load previous subscribed seasons on demand.
-- **Theme music**: automatically shuffle matching 30-second soundtrack previews across the subscribed lineup, including a large WWE and wider pro-wrestling entrance theme pool, controlled by a single on/off preference in Profile.
-- **Discover**: browse daily-changing trending and personalized recommendation carousels, filter by content type and streaming service, or search TVmaze, AniList, TMDB, and Apple's movie catalog, then subscribe with one tap.
-- **Profile**: manage subscriptions and watched episodes, see total watch time, and control reminders, appearance, and local data.
+## Privacy And Support
 
-TV schedules come from TVmaze's free public API, anime metadata and airings come from AniList's free GraphQL API, and movie search also uses Apple's public Search API. The browse grid includes a curated starter set, including *Dear You* (`给阿嬷的情书`).
-
-## Asian catalog
-
-TMDB adds broader Asian drama and film coverage, posters, and known episode dates. Create a free TMDB API Read Access Token, then open **Profile > Catalogs** in the app and paste it there. The token is stored only in the iPhone Keychain and is not written into this repository.
-
-MyDramaList is useful for checking Asian title metadata, but it does not offer a supported public API, so this app does not scrape it. This product uses the TMDB API but is not endorsed or certified by TMDB.
+- [Privacy Policy](PRIVACY.md)
+- [Support](SUPPORT.md)

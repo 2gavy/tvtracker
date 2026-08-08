@@ -1,5 +1,10 @@
 import Foundation
 
+struct TVMazeDiscovery {
+    let airingSoon: [Show]
+    let premieres: [Show]
+}
+
 struct TVMazeClient {
     enum APIError: LocalizedError {
         case invalidRequest
@@ -30,21 +35,81 @@ struct TVMazeClient {
 
         let data = try await request(url)
         let results = try decoder.decode([SearchResultDTO].self, from: data)
-        return results.prefix(12).map { result in
-            let item = result.show
-            return Show(
-                id: showIDOffset + item.id,
-                tvmazeID: item.id,
-                title: item.name,
-                network: item.webChannel?.name ?? item.network?.name ?? "Network TBA",
-                genres: item.genres,
-                imageName: nil,
-                imageURL: item.image?.medium.flatMap(URL.init(string:)),
-                tintHex: tints[item.id % tints.count],
-                summary: cleanSummary(item.summary),
-                status: item.status
-            )
+        return results.prefix(20).map { makeShow($0.show) }
+    }
+
+    func discoverSchedule(
+        starting date: Date = .now,
+        days: Int = 7,
+        timeZone: TimeZone = .current
+    ) async throws -> TVMazeDiscovery {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+
+        var candidates: [Int: DiscoveryCandidate] = [:]
+        for offset in 0..<days {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: date),
+                  var broadcastComponents = URLComponents(string: "https://api.tvmaze.com/schedule"),
+                  var streamingComponents = URLComponents(string: "https://api.tvmaze.com/schedule/web") else {
+                continue
+            }
+            let dayValue = formatter.string(from: day)
+            broadcastComponents.queryItems = [
+                URLQueryItem(name: "country", value: "US"),
+                URLQueryItem(name: "date", value: dayValue)
+            ]
+            streamingComponents.queryItems = [URLQueryItem(name: "date", value: dayValue)]
+            guard let broadcastURL = broadcastComponents.url,
+                  let streamingURL = streamingComponents.url else { continue }
+
+            async let broadcastData = request(broadcastURL)
+            async let streamingData = request(streamingURL)
+            let (broadcastPayload, streamingPayload) = try await (broadcastData, streamingData)
+            let broadcasts = try decoder.decode([ScheduleEpisodeDTO].self, from: broadcastPayload)
+            let streams = try decoder.decode([WebScheduleEpisodeDTO].self, from: streamingPayload)
+
+            func addCandidate(show: ShowDTO, season: Int?, number: Int?) {
+                guard show.image?.medium != nil,
+                      !show.genres.isEmpty,
+                      show.type != "News",
+                      show.type != "Sports" else { return }
+                let candidate = DiscoveryCandidate(
+                    show: show,
+                    isPremiere: season == 1 && (number ?? 0) <= 2
+                )
+                if let existing = candidates[show.id] {
+                    candidates[show.id] = DiscoveryCandidate(
+                        show: existing.show,
+                        isPremiere: existing.isPremiere || candidate.isPremiere
+                    )
+                } else {
+                    candidates[show.id] = candidate
+                }
+            }
+
+            broadcasts.forEach {
+                addCandidate(show: $0.show, season: $0.season, number: $0.number)
+            }
+            streams.forEach {
+                addCandidate(show: $0.embedded.show, season: $0.season, number: $0.number)
+            }
         }
+
+        let ranked = candidates.values.sorted { left, right in
+            let leftWeight = left.show.weight ?? 0
+            let rightWeight = right.show.weight ?? 0
+            if leftWeight != rightWeight { return leftWeight > rightWeight }
+            return left.show.name < right.show.name
+        }
+        return TVMazeDiscovery(
+            airingSoon: ranked.prefix(40).map { makeShow($0.show) },
+            premieres: ranked.filter(\.isPremiere).prefix(20).map { makeShow($0.show) }
+        )
     }
 
     func episodes(
@@ -107,9 +172,15 @@ struct TVMazeClient {
         return requestedEpisodes
     }
 
-    private func request(_ url: URL) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(from: url)
+    private func request(_ url: URL, canRetry: Bool = true) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.setValue("TVTracker/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.server(0) }
+        if http.statusCode == 429, canRetry {
+            try await Task.sleep(for: .seconds(2))
+            return try await self.request(url, canRetry: false)
+        }
         if http.statusCode == 429 { throw APIError.rateLimited }
         guard 200..<300 ~= http.statusCode else { throw APIError.server(http.statusCode) }
         return data
@@ -128,6 +199,21 @@ struct TVMazeClient {
         return formatter.date(from: value)
     }
 
+    private func makeShow(_ item: ShowDTO) -> Show {
+        Show(
+            id: showIDOffset + item.id,
+            tvmazeID: item.id,
+            title: item.name,
+            network: item.webChannel?.name ?? item.network?.name ?? "Network TBA",
+            genres: item.genres,
+            imageName: nil,
+            imageURL: item.image?.medium.flatMap(URL.init(string:)),
+            tintHex: tints[item.id % tints.count],
+            summary: cleanSummary(item.summary),
+            status: item.status
+        )
+    }
+
     private func cleanSummary(_ value: String?) -> String {
         guard let value else { return "No summary available." }
         return value
@@ -144,12 +230,40 @@ private struct SearchResultDTO: Decodable {
 private struct ShowDTO: Decodable {
     let id: Int
     let name: String
+    let type: String?
     let status: String
     let genres: [String]
     let network: ChannelDTO?
     let webChannel: ChannelDTO?
     let image: ImageDTO?
     let summary: String?
+    let weight: Int?
+}
+
+private struct DiscoveryCandidate {
+    let show: ShowDTO
+    let isPremiere: Bool
+}
+
+private struct ScheduleEpisodeDTO: Decodable {
+    let season: Int?
+    let number: Int?
+    let show: ShowDTO
+}
+
+private struct WebScheduleEpisodeDTO: Decodable {
+    let season: Int?
+    let number: Int?
+    let embedded: EmbeddedShowDTO
+
+    private enum CodingKeys: String, CodingKey {
+        case season, number
+        case embedded = "_embedded"
+    }
+}
+
+private struct EmbeddedShowDTO: Decodable {
+    let show: ShowDTO
 }
 
 private struct ChannelDTO: Decodable {

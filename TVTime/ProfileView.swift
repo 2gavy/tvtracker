@@ -2,33 +2,28 @@ import SwiftUI
 
 struct ProfileView: View {
     @EnvironmentObject private var store: ShowStore
-    @AppStorage("episodeReminders") private var reminders = true
-    @AppStorage("spoilerProtection") private var spoilerProtection = true
     @AppStorage("darkModeEnabled") private var darkModeEnabled = true
-    @AppStorage("themeMusicEnabled") private var themeMusicEnabled = true
+    @Binding var allowsTabSwipe: Bool
+    @State private var isShowingSubscriptions = false
+    @State private var isShowingWatchedEpisodes = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    NavigationLink {
-                        FollowingView()
-                    } label: {
-                        LabeledContent("Subscribed shows", value: "\(store.followedShows.count)")
-                    }
-
-                    NavigationLink {
-                        WatchedEpisodesView()
-                    } label: {
-                        LabeledContent("Episodes watched", value: "\(store.watchedAiringIDs.count)")
-                    }
-
-                    LabeledContent("Watched hours", value: store.watchedDuration)
+                    StatsGrid(
+                        onSubscriptions: { isShowingSubscriptions = true },
+                        onWatchedEpisodes: { isShowingWatchedEpisodes = true }
+                    )
                 }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowBackground(Color.clear)
 
                 Section("Schedule") {
                     NavigationLink {
                         TimeZonePickerView(selection: $store.timeZoneIdentifier)
+                            .onAppear { allowsTabSwipe = false }
+                            .onDisappear { allowsTabSwipe = true }
                     } label: {
                         LabeledContent(
                             "Time zone",
@@ -37,30 +32,110 @@ struct ProfileView: View {
                     }
                 }
 
-                Section("Notifications") {
-                    Toggle("Episode reminders", isOn: $reminders)
-                    Toggle("Hide episode titles until aired", isOn: $spoilerProtection)
-                }
-
                 Section("Appearance") {
                     Toggle("Dark mode", systemImage: "circle.lefthalf.filled", isOn: $darkModeEnabled)
                 }
 
-                Section("Playback") {
-                    Toggle("Theme music", systemImage: "music.note", isOn: $themeMusicEnabled)
-                }
-
-                Section("Data") {
+            }
+            .navigationTitle("Settings")
+            .navigationDestination(isPresented: $isShowingSubscriptions) {
+                FollowingView()
+                    .onAppear { allowsTabSwipe = false }
+                    .onDisappear { allowsTabSwipe = true }
+            }
+            .navigationDestination(isPresented: $isShowingWatchedEpisodes) {
+                WatchedEpisodesView()
+                    .onAppear { allowsTabSwipe = false }
+                    .onDisappear { allowsTabSwipe = true }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
-                        CatalogSourcesView()
+                        AboutView()
+                            .onAppear { allowsTabSwipe = false }
+                            .onDisappear { allowsTabSwipe = true }
                     } label: {
-                        LabeledContent("Catalogs", value: TMDBClient().isConfigured ? "4 active" : "3 active")
+                        Image(systemName: "info.circle")
                     }
-                    LabeledContent("Stored", value: "On this iPhone")
+                    .accessibilityLabel("About TV Tracker")
                 }
             }
-            .navigationTitle("Profile")
         }
+    }
+}
+
+private struct StatsGrid: View {
+    @EnvironmentObject private var store: ShowStore
+    let onSubscriptions: () -> Void
+    let onWatchedEpisodes: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: onSubscriptions) {
+                StatMetric(
+                    value: "\(store.followedShows.count)",
+                    label: "Subscribed"
+                )
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Subscribed shows, \(store.followedShows.count)")
+
+            Divider()
+                .frame(height: 44)
+
+            Button(action: onWatchedEpisodes) {
+                StatMetric(
+                    value: "\(store.watchedAiringIDs.count)",
+                    label: "Episodes"
+                )
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Episodes watched, \(store.watchedAiringIDs.count)")
+
+            Divider()
+                .frame(height: 44)
+
+            StatMetric(
+                value: store.watchedDuration,
+                label: "Watch time"
+            )
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Watched time, \(store.watchedDuration)")
+        }
+        .padding(16)
+        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(AppTheme.separator.opacity(0.3), lineWidth: 0.5)
+        }
+    }
+}
+
+private struct StatMetric: View {
+    let value: String
+    let label: String
+
+    var body: some View {
+        VStack(spacing: 5) {
+            Text(value)
+                .font(.title.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(AppTheme.accent)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 4)
+        .contentShape(Rectangle())
     }
 }
 
@@ -170,57 +245,50 @@ private struct TimeZonePickerView: View {
     }
 }
 
-private struct CatalogSourcesView: View {
-    @State private var token = ""
-    @State private var isConnected = TMDBClient().isConfigured
+private struct AboutView: View {
+    private var version: String {
+        let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        return "Version \(shortVersion) (\(build))"
+    }
 
     var body: some View {
         Form {
-            Section("Included") {
-                LabeledContent("TVmaze", value: "TV schedules")
-                LabeledContent("AniList", value: "Anime")
-                LabeledContent("Apple", value: "Movies")
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("TV Tracker")
+                        .font(.title2.weight(.bold))
+                    Text("Never miss the next episode of your shows.")
+                        .foregroundStyle(.secondary)
+                    Text(version)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
             }
 
-            Section {
-                SecureField("TMDB read access token", text: $token)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-
-                Button(isConnected ? "Update TMDB connection" : "Connect TMDB") {
-                    isConnected = TMDBCredentials.saveToken(token)
-                    token = ""
-                }
-                .disabled(token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                if isConnected {
-                    Button("Disconnect TMDB", role: .destructive) {
-                        TMDBCredentials.deleteToken()
-                        isConnected = false
-                    }
-                }
-
-                Link("Get a free TMDB token", destination: URL(string: "https://www.themoviedb.org/settings/api")!)
-            } header: {
-                Text("Asian dramas and films")
-            } footer: {
-                Text("The token stays in this iPhone's Keychain and is never saved in the project.")
+            Section("Help & legal") {
+                Link("Privacy Policy", destination: URL(string: "https://github.com/2gavy/tvtime/blob/main/PRIVACY.md")!)
+                Link("Support", destination: URL(string: "https://github.com/2gavy/tvtime/issues")!)
             }
 
-            Section {
+            Section("Credits") {
+                Link("TV information provided by TVmaze", destination: URL(string: "https://www.tvmaze.com")!)
+
                 HStack(spacing: 14) {
                     Image("TMDBLogo")
                         .resizable()
                         .scaledToFit()
-                    .frame(width: 72, height: 28)
+                        .frame(width: 72, height: 28)
 
                     Text("This product uses the TMDB API but is not endorsed or certified by TMDB.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
+
         }
-        .navigationTitle("Catalogs")
+        .navigationTitle("About")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

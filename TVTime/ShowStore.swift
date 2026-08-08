@@ -19,6 +19,7 @@ final class ShowStore: ObservableObject {
                 return
             }
             UserDefaults.standard.set(timeZoneIdentifier, forKey: timeZoneKey)
+            persistUserStateToCloud()
         }
     }
 
@@ -27,9 +28,12 @@ final class ShowStore: ObservableObject {
     private let savedShowsKey = "savedTVMazeShows"
     private let savedAiringsKey = "savedTVMazeAirings"
     private let timeZoneKey = "scheduleTimeZoneIdentifier"
+    private let cloudModifiedAtKey = "cloudStateModifiedAt"
     private let client = TVMazeClient()
     private let tmdbClient = TMDBClient()
-    private let aniListClient = AniListClient()
+    private let cloudStateStore = CloudStateStore()
+    private var cloudObserver: NSObjectProtocol?
+    private var isApplyingCloudState = false
 
     init() {
         let savedTimeZone = UserDefaults.standard.string(forKey: timeZoneKey)
@@ -50,10 +54,22 @@ final class ShowStore: ObservableObject {
         if let saved = UserDefaults.standard.array(forKey: followedKey) as? [Int] {
             followedIDs = Set(saved)
         } else {
-            followedIDs = [101, 102, 104, 106]
+            followedIDs = []
         }
 
         watchedAiringIDs = Set(UserDefaults.standard.array(forKey: watchedKey) as? [Int] ?? [])
+
+        cloudStateStore.synchronize()
+        if let snapshot = cloudStateStore.load() {
+            applyCloudSnapshotIfNewer(snapshot)
+        } else if hasLocalUserState {
+            persistUserStateToCloud()
+        }
+        cloudObserver = cloudStateStore.observeChanges { [weak self] snapshot in
+            Task { @MainActor in
+                self?.receiveCloudChange(snapshot)
+            }
+        }
 
         Task { [weak self] in
             await self?.refreshFollowedSchedules()
@@ -94,6 +110,8 @@ final class ShowStore: ObservableObject {
     var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
+        calendar.firstWeekday = 2
+        calendar.minimumDaysInFirstWeek = 4
         return calendar
     }
 
@@ -124,21 +142,23 @@ final class ShowStore: ObservableObject {
             followedIDs.insert(show.id)
             if show.mediaType == .movie {
                 addMovieRelease(for: show)
-            } else if show.tvmazeID != nil || show.tmdbID != nil || show.anilistID != nil {
+            } else if show.tvmazeID != nil || show.tmdbID != nil {
                 Task { await refreshSchedule(for: show) }
             }
         }
         UserDefaults.standard.set(Array(followedIDs), forKey: followedKey)
+        persistUserStateToCloud()
     }
 
     func isLoadingSchedule(for show: Show) -> Bool {
         loadingScheduleIDs.contains(show.id)
     }
 
-    func refreshSchedule(for show: Show, includingHistory: Bool = false) async {
+    @discardableResult
+    func refreshSchedule(for show: Show, includingHistory: Bool = false) async -> Bool {
         guard show.mediaType == .tvShow,
-              show.tvmazeID != nil || show.tmdbID != nil || show.anilistID != nil,
-              !loadingScheduleIDs.contains(show.id) else { return }
+              show.tvmazeID != nil || show.tmdbID != nil,
+              !loadingScheduleIDs.contains(show.id) else { return false }
         loadingScheduleIDs.insert(show.id)
         defer { loadingScheduleIDs.remove(show.id) }
 
@@ -157,12 +177,9 @@ final class ShowStore: ObservableObject {
                     timeZone: timeZone
                 )
             } else {
-                episodes = try await aniListClient.episodes(
-                    for: show,
-                    includingHistory: includingHistory,
-                    timeZone: timeZone
-                )
+                episodes = []
             }
+            guard followedIDs.contains(show.id) else { return false }
             let startOfToday = calendar.startOfDay(for: .now)
             let startOfLastWeek = calendar.date(
                 byAdding: .day,
@@ -177,8 +194,10 @@ final class ShowStore: ObservableObject {
             }
             airings.append(contentsOf: episodes)
             persistRemoteAirings()
+            return true
         } catch {
             // The subscription remains saved; a later refresh can retry the schedule.
+            return false
         }
     }
 
@@ -188,7 +207,7 @@ final class ShowStore: ObservableObject {
         defer { isRefreshingSchedules = false }
 
         for show in followedShows where show.mediaType == .tvShow
-            && (show.tvmazeID != nil || show.tmdbID != nil || show.anilistID != nil) {
+            && (show.tvmazeID != nil || show.tmdbID != nil) {
             await refreshSchedule(for: show)
         }
     }
@@ -196,15 +215,17 @@ final class ShowStore: ObservableObject {
     func loadPreviousSeasons() async {
         guard !hasLoadedHistory, !isRefreshingSchedules else { return }
         isRefreshingSchedules = true
-        defer {
-            hasLoadedHistory = true
-            isRefreshingSchedules = false
-        }
+        defer { isRefreshingSchedules = false }
 
-        for show in followedShows where show.mediaType == .tvShow
-            && (show.tvmazeID != nil || show.tmdbID != nil || show.anilistID != nil) {
-            await refreshSchedule(for: show, includingHistory: true)
+        let trackableShows = followedShows.filter {
+            $0.mediaType == .tvShow && ($0.tvmazeID != nil || $0.tmdbID != nil)
         }
+        var loadedEveryShow = true
+        for show in trackableShows {
+            let loaded = await refreshSchedule(for: show, includingHistory: true)
+            loadedEveryShow = loadedEveryShow && loaded
+        }
+        hasLoadedHistory = loadedEveryShow
     }
 
     func isWatched(_ airing: Airing) -> Bool {
@@ -217,20 +238,62 @@ final class ShowStore: ObservableObject {
         } else {
             watchedAiringIDs.insert(airing.id)
         }
+        persistWatchedState()
+    }
+
+    func markSeasonWatched(containing airing: Airing) async {
+        guard airing.season > 0 else {
+            if !isWatched(airing) {
+                watchedAiringIDs.insert(airing.id)
+                persistWatchedState()
+            }
+            return
+        }
+
+        let show = show(for: airing.showID)
+        if show.tvmazeID != nil || show.tmdbID != nil {
+            await refreshSchedule(for: show, includingHistory: true)
+        }
+
+        let airedEpisodeIDs = airings.lazy
+            .filter { episode in
+                episode.showID == airing.showID
+                    && episode.season == airing.season
+                    && episode.episode > 0
+                    && episode.airDate.map { $0 <= Date.now } == true
+            }
+            .map(\.id)
+
+        watchedAiringIDs.formUnion(airedEpisodeIDs)
+        persistWatchedState()
+    }
+
+    private func persistWatchedState() {
         UserDefaults.standard.set(Array(watchedAiringIDs), forKey: watchedKey)
+        persistUserStateToCloud()
     }
 
     func sections(matching filter: MediaFilter = .all) -> [AiringSection] {
         let startOfToday = calendar.startOfDay(for: .now)
+        let startOfThisWeek = calendar.dateInterval(
+            of: .weekOfYear,
+            for: startOfToday
+        )!.start
         let startOfLastWeek = calendar.date(
-            byAdding: .day,
-            value: -7,
-            to: startOfToday
+            byAdding: .weekOfYear,
+            value: -1,
+            to: startOfThisWeek
+        )!
+        let startOfNextWeek = calendar.date(
+            byAdding: .weekOfYear,
+            value: 1,
+            to: startOfThisWeek
         )!
         let source = followedAirings.filter { airing in
             guard filter.includes(show(for: airing.showID)) else { return false }
-            if hasLoadedHistory { return true }
             guard let date = airing.airDate else { return true }
+            if date >= startOfThisWeek, date < startOfToday { return false }
+            if hasLoadedHistory { return true }
             return date >= startOfLastWeek
         }
         let sorted = source.sorted { lhs, rhs in
@@ -244,11 +307,10 @@ final class ShowStore: ObservableObject {
 
         let grouped = Dictionary(grouping: sorted) { airing -> String in
             guard let date = airing.airDate else { return "Date TBA" }
-            if date >= startOfLastWeek, date < startOfToday { return "Last week" }
+            if date >= startOfLastWeek, date < startOfThisWeek { return "Last week" }
             if calendar.isDateInToday(date) { return "Today" }
             if calendar.isDateInTomorrow(date) { return "Tomorrow" }
-            if date >= startOfToday,
-               date < calendar.date(byAdding: .day, value: 7, to: startOfToday)! {
+            if date >= startOfThisWeek, date < startOfNextWeek {
                 return "This week"
             }
             return formatted(date, template: "MMMM yyyy")
@@ -310,6 +372,78 @@ final class ShowStore: ObservableObject {
         Self.save(airings.filter { $0.id > 1_000_000_000 }, key: savedAiringsKey)
     }
 
+    private var hasLocalUserState: Bool {
+        UserDefaults.standard.object(forKey: followedKey) != nil
+            || UserDefaults.standard.object(forKey: watchedKey) != nil
+            || UserDefaults.standard.object(forKey: savedShowsKey) != nil
+    }
+
+    private func persistUserStateToCloud() {
+        guard !isApplyingCloudState else { return }
+        let modifiedAt = Date().timeIntervalSince1970
+        let demoIDs = Set(DemoData.shows.map(\.id))
+        let subscribedRemoteShows = shows.filter {
+            followedIDs.contains($0.id) && !demoIDs.contains($0.id)
+        }
+        let snapshot = CloudStateSnapshot(
+            version: 1,
+            modifiedAt: modifiedAt,
+            followedIDs: followedIDs.sorted(),
+            watchedAiringIDs: watchedAiringIDs.sorted(),
+            savedShows: subscribedRemoteShows,
+            timeZoneIdentifier: timeZoneIdentifier
+        )
+        UserDefaults.standard.set(modifiedAt, forKey: cloudModifiedAtKey)
+        cloudStateStore.save(snapshot)
+    }
+
+    private func receiveCloudChange(_ snapshot: CloudStateSnapshot?) {
+        guard let snapshot else {
+            clearLocalStateAfterCloudDeletion()
+            return
+        }
+        applyCloudSnapshotIfNewer(snapshot)
+    }
+
+    private func applyCloudSnapshotIfNewer(_ snapshot: CloudStateSnapshot) {
+        let localModifiedAt = UserDefaults.standard.double(forKey: cloudModifiedAtKey)
+        guard snapshot.version == 1, snapshot.modifiedAt > localModifiedAt else { return }
+
+        isApplyingCloudState = true
+        followedIDs = Set(snapshot.followedIDs)
+        watchedAiringIDs = Set(snapshot.watchedAiringIDs)
+        shows = DemoData.shows + snapshot.savedShows.filter { saved in
+            !DemoData.shows.contains { $0.id == saved.id }
+        }
+        if TimeZone(identifier: snapshot.timeZoneIdentifier) != nil {
+            timeZoneIdentifier = snapshot.timeZoneIdentifier
+        }
+        UserDefaults.standard.set(snapshot.followedIDs, forKey: followedKey)
+        UserDefaults.standard.set(snapshot.watchedAiringIDs, forKey: watchedKey)
+        Self.save(snapshot.savedShows, key: savedShowsKey)
+        UserDefaults.standard.set(snapshot.modifiedAt, forKey: cloudModifiedAtKey)
+        isApplyingCloudState = false
+        Task { [weak self] in
+            await self?.refreshFollowedSchedules()
+        }
+    }
+
+    private func clearLocalStateAfterCloudDeletion() {
+        guard UserDefaults.standard.object(forKey: cloudModifiedAtKey) != nil else { return }
+        isApplyingCloudState = true
+        followedIDs = []
+        watchedAiringIDs = []
+        loadingScheduleIDs = []
+        shows = DemoData.shows
+        airings = []
+        hasLoadedHistory = false
+        timeZoneIdentifier = Self.defaultTimeZoneIdentifier
+        [followedKey, watchedKey, savedShowsKey, savedAiringsKey, timeZoneKey, cloudModifiedAtKey].forEach {
+            UserDefaults.standard.removeObject(forKey: $0)
+        }
+        isApplyingCloudState = false
+    }
+
     private static func load<Value: Decodable>(_ type: Value.Type, key: String) -> Value? {
         guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(type, from: data)
@@ -327,39 +461,22 @@ private enum DemoData {
     }
 
     static let shows: [Show] = [
-        Show(id: 101, tvmazeID: 44933, title: "Severance", network: "Apple TV+", genres: ["Drama", "Mystery"], imageName: "PosterSeverance", imageURL: nil, tintHex: "F4CF3B", summary: "Mark leads a team whose work memories have been surgically divided from their personal lives.", status: "Running"),
-        Show(id: 102, tvmazeID: 54198, title: "The Bear", network: "FX / Hulu", genres: ["Drama", "Comedy"], imageName: "PosterTheBear", imageURL: nil, tintHex: "55A7D9", summary: "A young chef returns home to run his family's sandwich shop.", status: "Ended"),
-        Show(id: 103, tvmazeID: 51394, title: "The White Lotus", network: "HBO", genres: ["Drama", "Comedy"], imageName: "PosterWhiteLotus", imageURL: nil, tintHex: "E66B53", summary: "A week in the life of vacationers and employees at an exclusive resort.", status: "Running"),
-        Show(id: 104, tvmazeID: 38052, title: "Silo", network: "Apple TV+", genres: ["Drama", "Science Fiction"], imageName: "PosterSilo", imageURL: nil, tintHex: "C69263", summary: "Thousands live underground, unaware of why the silo was built.", status: "Running"),
-        Show(id: 105, tvmazeID: 52341, title: "Andor", network: "Disney+", genres: ["Drama", "Science Fiction"], imageName: "PosterAndor", imageURL: nil, tintHex: "E86C3D", summary: "The story of a rebellion taking shape against an empire.", status: "Ended"),
-        Show(id: 106, tvmazeID: 45039, title: "Slow Horses", network: "Apple TV+", genres: ["Drama", "Thriller"], imageName: "PosterSlowHorses", imageURL: nil, tintHex: "76A06A", summary: "A dysfunctional team of MI5 agents navigates the espionage world's smoke and mirrors.", status: "Running"),
-        Show(id: 107, tvmazeID: 35951, title: "Foundation", network: "Apple TV+", genres: ["Drama", "Science Fiction"], imageName: "PosterFoundation", imageURL: nil, tintHex: "B88DE1", summary: "Exiles work to rebuild civilization amid the fall of a galactic empire.", status: "Running"),
-        Show(id: 108, tvmazeID: 54914, title: "Hacks", network: "Max", genres: ["Comedy"], imageName: "PosterHacks", imageURL: nil, tintHex: "ED6D9E", summary: "A legendary comedian forms a dark mentorship with a young comedy writer.", status: "Ended"),
-        Show(id: 109, tvmazeID: nil, title: "Dune: Part Two", network: "Warner Bros.", genres: ["Science Fiction", "Adventure"], imageName: nil, imageURL: URL(string: "https://is1-ssl.mzstatic.com/image/thumb/Video221/v4/71/a8/31/71a8312e-a20a-29b2-af70-5cab08908657/aca7621e-74e7-419a-96cd-5aaff99fb0cc_DUNE_PART2_V_DD_KA_TT_2000x3000_300dpi_EN-srgb.lsr/600x900bb.jpg"), tintHex: "D4A45B", summary: "Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family.", status: "Released", mediaType: .movie, releaseDate: releaseDate(2024, 3, 1), runtime: 166),
-        Show(id: 110, tvmazeID: nil, title: "Spider-Man: Across the Spider-Verse", network: "Sony Pictures", genres: ["Animation", "Adventure"], imageName: nil, imageURL: URL(string: "https://is1-ssl.mzstatic.com/image/thumb/Video221/v4/5e/88/10/5e8810c1-9025-b950-8dae-cfdcb7dbd75f/DP_10232262_SPIDER-MANACROSSTHESPIDER-VERSE_2000x3000_PURPLEHUEKeyArt.jpg/600x900bb.jpg"), tintHex: "E06C5F", summary: "Miles Morales is catapulted across the Multiverse and meets a team of Spider-People charged with protecting it.", status: "Released", mediaType: .movie, releaseDate: releaseDate(2023, 6, 2), runtime: 141),
-        Show(id: 111, tvmazeID: nil, title: "The Batman", network: "Warner Bros.", genres: ["Action", "Crime"], imageName: nil, imageURL: URL(string: "https://is1-ssl.mzstatic.com/image/thumb/Video116/v4/f6/7f/d8/f67fd824-b916-253c-61e7-5cbc659b8412/pr_source.lsr/600x900bb.jpg"), tintHex: "B94742", summary: "Batman ventures into Gotham City's underworld when a sadistic killer leaves behind a trail of cryptic clues.", status: "Released", mediaType: .movie, releaseDate: releaseDate(2022, 3, 4), runtime: 176),
+        Show(id: 101, tvmazeID: 44933, title: "Severance", network: "Apple TV+", genres: ["Drama", "Mystery"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/548/1371406.jpg"), tintHex: "F4CF3B", summary: "Mark leads a team whose work memories have been surgically divided from their personal lives.", status: "Running"),
+        Show(id: 102, tvmazeID: 54198, title: "The Bear", network: "FX / Hulu", genres: ["Drama", "Comedy"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/629/1574642.jpg"), tintHex: "55A7D9", summary: "A young chef returns home to run his family's sandwich shop.", status: "Ended"),
+        Show(id: 103, tvmazeID: 51394, title: "The White Lotus", network: "HBO", genres: ["Drama", "Comedy"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/557/1393876.jpg"), tintHex: "E66B53", summary: "A week in the life of vacationers and employees at an exclusive resort.", status: "Running"),
+        Show(id: 104, tvmazeID: 38052, title: "Silo", network: "Apple TV+", genres: ["Drama", "Science Fiction"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/631/1577677.jpg"), tintHex: "C69263", summary: "Thousands live underground, unaware of why the silo was built.", status: "Running"),
+        Show(id: 105, tvmazeID: 52341, title: "Andor", network: "Disney+", genres: ["Drama", "Science Fiction"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/564/1411766.jpg"), tintHex: "E86C3D", summary: "The story of a rebellion taking shape against an empire.", status: "Ended"),
+        Show(id: 106, tvmazeID: 45039, title: "Slow Horses", network: "Apple TV+", genres: ["Drama", "Thriller"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/593/1484384.jpg"), tintHex: "76A06A", summary: "A dysfunctional team of MI5 agents navigates the espionage world's smoke and mirrors.", status: "Running"),
+        Show(id: 107, tvmazeID: 35951, title: "Foundation", network: "Apple TV+", genres: ["Drama", "Science Fiction"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/573/1433544.jpg"), tintHex: "B88DE1", summary: "Exiles work to rebuild civilization amid the fall of a galactic empire.", status: "Running"),
+        Show(id: 108, tvmazeID: 54914, title: "Hacks", network: "Max", genres: ["Comedy"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/621/1552621.jpg"), tintHex: "ED6D9E", summary: "A legendary comedian forms a dark mentorship with a young comedy writer.", status: "Ended"),
+        Show(id: 109, tvmazeID: nil, title: "Dune: Part Two", network: "Warner Bros.", genres: ["Science Fiction", "Adventure"], imageName: nil, imageURL: nil, tintHex: "D4A45B", summary: "Paul Atreides joins the Fremen while confronting the forces that destroyed his family.", status: "Released", mediaType: .movie, releaseDate: releaseDate(2024, 3, 1), runtime: 166),
+        Show(id: 110, tvmazeID: nil, title: "Spider-Man: Across the Spider-Verse", network: "Sony Pictures", genres: ["Animation", "Adventure"], imageName: nil, imageURL: nil, tintHex: "E06C5F", summary: "Miles Morales travels across the Multiverse and meets other Spider-People.", status: "Released", mediaType: .movie, releaseDate: releaseDate(2023, 6, 2), runtime: 141),
+        Show(id: 111, tvmazeID: nil, title: "The Batman", network: "Warner Bros.", genres: ["Action", "Crime"], imageName: nil, imageURL: nil, tintHex: "B94742", summary: "Batman follows a trail of clues left by a killer targeting Gotham City.", status: "Released", mediaType: .movie, releaseDate: releaseDate(2022, 3, 4), runtime: 176),
         Show(id: 112, tvmazeID: 69956, title: "Frieren: Beyond Journey's End", network: "NTV", genres: ["Anime", "Adventure", "Fantasy"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/479/1198409.jpg"), tintHex: "A9B8E8", summary: "An elven mage retraces the journey she once shared with her companions and learns what their brief lives meant.", status: "To Be Determined"),
         Show(id: 113, tvmazeID: 64632, title: "Solo Leveling", network: "Tokyo MX", genres: ["Anime", "Action", "Fantasy"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/497/1244908.jpg"), tintHex: "6D8CD8", summary: "Humanity's weakest hunter gains a mysterious ability that lets him level up without limit.", status: "Running"),
         Show(id: 114, tvmazeID: 48450, title: "Jujutsu Kaisen", network: "MBS", genres: ["Anime", "Action", "Supernatural"], imageName: nil, imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/608/1521905.jpg"), tintHex: "D56C7C", summary: "A student joins a secret organization of sorcerers after becoming host to a powerful curse.", status: "Running"),
-        Show(id: 115, tvmazeID: nil, tmdbID: 1_671_548, title: "Dear You", network: "China", genres: ["Drama", "Family"], imageName: nil, imageURL: URL(string: "https://image.tmdb.org/t/p/w500/rjmhzdVS3Ia535pFawju857e2Na.jpg"), tintHex: "D9AF52", summary: "A grandson travels to Thailand to uncover a family story and find the grandfather he never knew.", status: "Released", mediaType: .movie, releaseDate: releaseDate(2026, 6, 18), runtime: 118)
+        Show(id: 115, tvmazeID: nil, tmdbID: 1_671_548, title: "Dear You", network: "China", genres: ["Drama", "Family"], imageName: nil, imageURL: nil, tintHex: "D9AF52", summary: "A grandson travels to Thailand to uncover a family story and find the grandfather he never knew.", status: "Released", mediaType: .movie, releaseDate: releaseDate(2026, 6, 18), runtime: 118)
     ]
 
-    static let airings: [Airing] = {
-        let calendar = Calendar.current
-        func date(_ days: Int, hour: Int = 20) -> Date {
-            let start = calendar.startOfDay(for: .now)
-            return calendar.date(byAdding: .hour, value: hour, to: calendar.date(byAdding: .day, value: days, to: start)!)!
-        }
-
-        return [
-            Airing(id: 1, showID: 106, season: 6, episode: 2, title: "A Proper Mess", airDate: date(0, hour: 21), runtime: 48, service: "Apple TV+"),
-            Airing(id: 2, showID: 102, season: 5, episode: 4, title: "The Review", airDate: date(1, hour: 20), runtime: 32, service: "Hulu"),
-            Airing(id: 3, showID: 103, season: 4, episode: 1, title: "Arrivals", airDate: date(3, hour: 21), runtime: 61, service: "Max"),
-            Airing(id: 4, showID: 108, season: 5, episode: 7, title: "The Set", airDate: date(5, hour: 22), runtime: 28, service: "Max"),
-            Airing(id: 5, showID: 107, season: 4, episode: 1, title: "The Mule", airDate: date(12, hour: 20), runtime: 54, service: "Apple TV+"),
-            Airing(id: 6, showID: 105, season: 3, episode: 1, title: "Episode 1", airDate: date(29, hour: 20), runtime: 51, service: "Disney+"),
-            Airing(id: 7, showID: 104, season: 3, episode: 1, title: "The Door", airDate: date(43, hour: 20), runtime: 52, service: "Apple TV+"),
-            Airing(id: 8, showID: 101, season: 3, episode: 1, title: "Season premiere", airDate: nil, runtime: 0, service: "Apple TV+")
-        ]
-    }()
+    static let airings: [Airing] = []
 }

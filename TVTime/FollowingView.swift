@@ -20,16 +20,18 @@ struct FollowingView: View {
                             Text(show.network).font(.subheadline).foregroundStyle(Color.secondary)
                         }
                         Spacer()
-                        Button {
-                            store.toggleFollow(show)
-                        } label: {
-                            Image(systemName: "checkmark.circle.fill")
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(AppTheme.accent)
-                        .accessibilityLabel("Unsubscribe from \(show.title)")
                     }
                     .padding(.vertical, 3)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            withAnimation(.snappy) {
+                                store.toggleFollow(show)
+                            }
+                        } label: {
+                            Label("Unsubscribe", systemImage: "minus.circle")
+                        }
+                        .accessibilityLabel("Unsubscribe from \(show.title)")
+                    }
                 }
                 .listStyle(.plain)
             }

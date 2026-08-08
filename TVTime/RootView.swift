@@ -1,155 +1,80 @@
 import SwiftUI
 
 struct RootView: View {
-    @EnvironmentObject private var store: ShowStore
-    @AppStorage("themeMusicEnabled") private var themeMusicEnabled = true
     @State private var selection: AppTab = .shows
-    @State private var isPlayerVisible = false
-    @StateObject private var themePlayer = ThemeSongPlayer()
+    @State private var showsResetRequest = 0
+    @State private var settingsAllowsTabSwipe = true
+
+    private var tabSelection: Binding<AppTab> {
+        Binding(
+            get: { selection },
+            set: select
+        )
+    }
 
     var body: some View {
-        GeometryReader { geometry in
-            TabView(selection: $selection) {
-                ShowsView()
-                    .tag(AppTab.shows)
-                    .tabItem { Label("Shows", systemImage: "play.tv.fill") }
+        TabView(selection: tabSelection) {
+            DiscoverView()
+                .tag(AppTab.discover)
+                .tabItem { Label("Discover", systemImage: "sparkles.tv.fill") }
 
-                DiscoverView()
-                    .tag(AppTab.discover)
-                    .tabItem { Label("Discover", systemImage: "sparkles.tv.fill") }
+            ShowsView(
+                scrollToTodayRequest: showsResetRequest,
+                onDiscover: { select(.discover) }
+            )
+                .tag(AppTab.shows)
+                .tabItem { Label("Shows", systemImage: "play.tv.fill") }
 
-                ProfileView()
-                    .tag(AppTab.profile)
-                    .tabItem { Label("Profile", systemImage: "person.crop.circle") }
-            }
-            .overlay(alignment: .bottom) {
-                if isPlayerVisible, let song = themePlayer.currentSong {
-                    NowPlayingBanner(
-                        song: song,
-                        isPlaying: themePlayer.isPlaying,
-                        playPrevious: themePlayer.playPreviousTheme,
-                        togglePlayback: themePlayer.togglePlayback,
-                        playNext: { Task { await themePlayer.skipToNextTheme() } }
-                    )
-                    .padding(.bottom, 54)
-                    .padding(.horizontal, 12)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            }
+            ProfileView(allowsTabSwipe: $settingsAllowsTabSwipe)
+                .tag(AppTab.settings)
+                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
         .tint(AppTheme.accent)
-        .animation(.snappy, value: isPlayerVisible)
-        .task {
-            if themeMusicEnabled {
-                await themePlayer.autoplay(from: store.followedShows)
-            }
-        }
-        .task(id: themePlayer.currentSong?.id) {
-            guard themePlayer.currentSong != nil else {
-                isPlayerVisible = false
-                return
-            }
-
-            isPlayerVisible = true
-            try? await Task.sleep(for: .seconds(8))
-            guard !Task.isCancelled else { return }
-            isPlayerVisible = false
-        }
-        .onChange(of: themeMusicEnabled) { _, isEnabled in
-            if isEnabled {
-                Task { await themePlayer.autoplay(from: store.followedShows) }
-            } else {
-                themePlayer.disable()
-                isPlayerVisible = false
-            }
-        }
-        .onChange(of: store.followedIDs) { previousIDs, currentIDs in
-            if currentIDs.isEmpty {
-                themePlayer.disable()
-                isPlayerVisible = false
-            } else if previousIDs.isEmpty, themeMusicEnabled {
-                Task { await themePlayer.autoplay(from: store.followedShows) }
-            } else if themeMusicEnabled {
-                Task { await themePlayer.updateSubscriptions(store.followedShows) }
-            }
+        .simultaneousGesture(tabSwipeGesture)
+        .onAppear {
+            showsResetRequest &+= 1
         }
     }
-}
 
-private struct NowPlayingBanner: View {
-    let song: ThemeSong
-    let isPlaying: Bool
-    let playPrevious: () -> Void
-    let togglePlayback: () -> Void
-    let playNext: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            AsyncImage(url: song.artworkURL) { phase in
-                if let image = phase.image {
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Image(systemName: "music.note")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(AppTheme.accent)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(AppTheme.elevated)
+    private var tabSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 30)
+            .onEnded { value in
+                let horizontal = value.translation.width
+                let vertical = value.translation.height
+                guard (selection != .settings || settingsAllowsTabSwipe),
+                      abs(horizontal) >= 100,
+                      abs(horizontal) > abs(vertical) * 1.5,
+                      let destination = tab(inSwipeDirection: horizontal) else {
+                    return
+                }
+                withAnimation(.snappy) {
+                    select(destination)
                 }
             }
-            .frame(width: 50, height: 50)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Now Playing")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(AppTheme.accent)
-                    .textCase(.uppercase)
-
-                Text(song.title)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-
-                Text(song.artist)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+    private func tab(inSwipeDirection horizontal: CGFloat) -> AppTab? {
+        if horizontal < 0 {
+            switch selection {
+            case .discover: return nil
+            case .shows: return .discover
+            case .settings: return .shows
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 2) {
-                Button(action: playPrevious) {
-                    Image(systemName: "backward.end.fill")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 36, height: 38)
-                }
-                .accessibilityLabel("Play previous theme")
-
-                Button(action: togglePlayback) {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 36, height: 38)
-                }
-                .accessibilityLabel(isPlaying ? "Pause theme" : "Resume theme")
-
-                Button(action: playNext) {
-                    Image(systemName: "forward.end.fill")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 36, height: 38)
-                }
-                .accessibilityLabel("Play next theme")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
         }
-        .padding(10)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(AppTheme.separator, lineWidth: 0.5)
+
+        switch selection {
+        case .discover: return .shows
+        case .shows: return .settings
+        case .settings: return nil
         }
-        .shadow(color: .black.opacity(0.22), radius: 12, y: 5)
+    }
+
+    private func select(_ newSelection: AppTab) {
+        selection = newSelection
+        guard newSelection == .shows else { return }
+
+        DispatchQueue.main.async {
+            showsResetRequest &+= 1
+        }
     }
 }

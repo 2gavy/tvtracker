@@ -144,7 +144,7 @@ enum MediaFilter: String, CaseIterable, Identifiable {
 }
 
 enum AppTab: Hashable {
-    case shows
     case discover
-    case profile
+    case shows
+    case settings
 }

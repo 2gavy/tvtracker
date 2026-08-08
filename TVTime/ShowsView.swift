@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ShowsView: View {
     @EnvironmentObject private var store: ShowStore
+    let scrollToTodayRequest: Int
+    let onDiscover: () -> Void
     @State private var mediaFilter: MediaFilter = .all
 
     var body: some View {
@@ -10,9 +12,12 @@ struct ShowsView: View {
             ScrollViewReader { proxy in
                 List {
                     if sections.isEmpty {
-                        ContentUnavailableView(
-                            emptyTitle,
-                            systemImage: emptySystemImage
+                        EmptyScheduleView(
+                            title: emptyTitle,
+                            systemImage: emptySystemImage,
+                            description: emptyDescription,
+                            canDiscover: mediaFilter == .all && store.followedShows.isEmpty,
+                            onDiscover: onDiscover
                         )
                         .listRowSeparator(.hidden)
                     } else {
@@ -49,6 +54,10 @@ struct ShowsView: View {
                     let updated = store.sections(matching: mediaFilter)
                     scrollToPresent(proxy, sections: updated, animated: true)
                 }
+                .onChange(of: scrollToTodayRequest) {
+                    let updated = store.sections(matching: mediaFilter)
+                    scrollToPresent(proxy, sections: updated, animated: true)
+                }
                 .onChange(of: store.isRefreshingSchedules) { _, isRefreshing in
                     if !isRefreshing {
                         scrollToPresent(
@@ -60,7 +69,7 @@ struct ShowsView: View {
                 }
             }
             .background(Color(uiColor: .systemBackground))
-            .navigationTitle("TV Time")
+            .navigationTitle("TV Tracker")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -96,6 +105,13 @@ struct ShowsView: View {
         }
     }
 
+    private var emptyDescription: String {
+        if store.followedShows.isEmpty {
+            return "Subscribe to a show and its upcoming dates will appear here."
+        }
+        return "There are no known dates for this filter yet."
+    }
+
     private func scrollToPresent(
         _ proxy: ScrollViewProxy,
         sections: [AiringSection],
@@ -112,7 +128,6 @@ struct ShowsView: View {
     }
 
     private func anchorSectionID(in sections: [AiringSection]) -> String? {
-        if let thisWeek = sections.first(where: { $0.title == "This week" }) { return thisWeek.id }
         if let today = sections.first(where: { $0.title == "Today" }) { return today.id }
 
         let startOfToday = store.calendar.startOfDay(for: .now)
@@ -127,16 +142,48 @@ struct ShowsView: View {
     }
 }
 
+private struct EmptyScheduleView: View {
+    let title: String
+    let systemImage: String
+    let description: String
+    let canDiscover: Bool
+    let onDiscover: () -> Void
+
+    var body: some View {
+        VStack(spacing: 18) {
+            ContentUnavailableView {
+                Label(title, systemImage: systemImage)
+            } description: {
+                Text(description)
+            }
+
+            if canDiscover {
+                Button(action: onDiscover) {
+                    Label("Find shows", systemImage: "sparkles.tv")
+                        .font(.headline)
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 18)
+                        .frame(height: 44)
+                        .background(AppTheme.accent, in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 36)
+    }
+}
+
 private struct SectionHeader: View {
     let section: AiringSection
-    private var isCurrentWeek: Bool { section.title == "This week" }
+    private var isToday: Bool { section.title == "Today" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(section.title)
                 .font(.title3.weight(.bold))
                 .textCase(nil)
-                .foregroundStyle(isCurrentWeek ? AppTheme.accent : Color.primary)
+                .foregroundStyle(isToday ? AppTheme.accent : Color.primary)
 
             if let subtitle = section.subtitle {
                 Text(subtitle)
@@ -212,6 +259,42 @@ struct AiringRow: View {
         .animation(.snappy, value: isWatched)
         .padding(.vertical, 5)
         .listRowBackground(Color(uiColor: .systemBackground))
+        .contextMenu {
+            if show.mediaType == .tvShow, airing.season > 0 {
+                Button {
+                    Task {
+                        await store.markSeasonWatched(containing: airing)
+                    }
+                } label: {
+                    Label("Mark season watched", systemImage: "checkmark.circle.fill")
+                }
+            }
+        } preview: {
+            SeasonWatchPreview(show: show, airing: airing)
+        }
+    }
+}
+
+private struct SeasonWatchPreview: View {
+    let show: Show
+    let airing: Airing
+
+    var body: some View {
+        HStack(spacing: 14) {
+            PosterView(show: show, width: 64, height: 92)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(show.title)
+                    .font(.headline)
+                    .lineLimit(2)
+                Text("Season \(airing.season)")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
+            }
+        }
+        .padding(16)
+        .frame(width: 260, alignment: .leading)
+        .background(Color(uiColor: .systemBackground))
     }
 }
 

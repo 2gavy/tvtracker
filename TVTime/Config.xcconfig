@@ -1,0 +1,2 @@
+TMDB_READ_ACCESS_TOKEN =
+#include? "Secrets.xcconfig"

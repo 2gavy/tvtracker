@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 struct TMDBClient {
     enum APIError: LocalizedError {
@@ -11,7 +10,7 @@ struct TMDBClient {
         var errorDescription: String? {
             switch self {
             case .notConfigured:
-                return "Add a free TMDB read token to enable Asian drama and film search."
+                return "Movie and Asian title search is temporarily unavailable."
             case .invalidRequest:
                 return "TMDB could not create that request."
             case .rateLimited:
@@ -130,7 +129,6 @@ struct TMDBClient {
     }
 
     private var accessToken: String? {
-        if let stored = TMDBCredentials.loadToken(), !stored.isEmpty { return stored }
         if let environment = ProcessInfo.processInfo.environment["TMDB_READ_ACCESS_TOKEN"],
            !environment.isEmpty {
             return environment
@@ -226,49 +224,6 @@ struct TMDBClient {
         10768: "War & Politics", 12: "Adventure", 14: "Fantasy", 27: "Horror",
         878: "Science Fiction", 9648: "Mystery", 10402: "Music", 10752: "War"
     ]
-}
-
-enum TMDBCredentials {
-    private static let service = "com.zingzailoo.tvtracker.tmdb"
-    private static let account = "read-access-token"
-
-    static func loadToken() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    @discardableResult
-    static func saveToken(_ token: String) -> Bool {
-        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        deleteToken()
-        guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else { return false }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
-    }
-
-    static func deleteToken() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
-    }
 }
 
 private struct SearchResponse: Decodable {
