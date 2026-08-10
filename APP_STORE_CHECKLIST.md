@@ -1,15 +1,13 @@
 # TV Tracker App Store Checklist
 
-TV Tracker is a paid App Store download with unlimited tracking. It has no free tier, subscription, login requirement, or in-app purchase in version 1.0.
+TV Tracker launches as a free App Store download with unlimited tracking. It has no subscription, login requirement, or in-app purchase in version 1.0.
 
 ## Required Before Submission
 
 - [ ] Confirm `TV Tracker` branding with appropriate trademark searches in launch markets.
-- [ ] Register the neutral bundle ID `app.tvtracker.timeline` in the Apple Developer portal and confirm it is available.
-- [ ] Enable the iCloud Key-value storage capability for `app.tvtracker.timeline` before creating the distribution profile.
-- [ ] Accept the Paid Apps Agreement and complete banking and tax details in App Store Connect.
-- [ ] Set the planned one-time download price to US$0.99, or deliberately revise it before submission.
-- [ ] Obtain written TMDB commercial approval before including TMDB content in the paid build.
+- [x] Register `com.noriesloo.tvtracker` in the Apple Developer portal.
+- [x] Enable the iCloud key-value storage capability for `com.noriesloo.tvtracker` before creating the distribution profile.
+- [ ] Confirm the intended TMDB use is covered by provider permission before including TMDB content in the release build.
 - [ ] Confirm the production TMDB credential architecture. An xcconfig prevents accidental Git commits, but a token embedded in an iOS app can still be extracted; use a provider-approved client credential or a protected proxy.
 - [ ] Review TVmaze CC BY-SA ShareAlike obligations for the final use; in-app attribution is already present.
 - [ ] Host `PRIVACY.md` and `SUPPORT.md` at stable public HTTPS URLs and update the in-app links if the repository URLs change.
@@ -26,7 +24,7 @@ TV Tracker is a paid App Store download with unlimited tracking. It has no free 
 
 ## Already Reflected In The App
 
-- [x] Paid-upfront product shape; no misleading free-plan or paywall UI.
+- [x] No paywall or purchase UI in version 1.0.
 - [x] No mandatory account or login.
 - [x] No music, theme-song playback, advertising, or analytics SDK.
 - [x] AniList and Apple Search catalogue integrations removed from the release target.

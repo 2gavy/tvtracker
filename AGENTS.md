@@ -11,8 +11,6 @@ Use the `viral-product-builder` skill for product strategy, features, pricing, o
 
 ## Product Decisions
 
-- Build a paid product rather than a permanent free tier.
-- Prefer one clear lifetime price unless recurring infrastructure makes that unsustainable.
 - Keep login optional unless cloud sync or another account-based feature requires it.
 - Use concrete numbers such as next-airing time, episode count, and watched hours.
 - Add features only when they strengthen tracking, discovery, proof of value, or a privacy-safe sharing loop.

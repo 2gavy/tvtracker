@@ -2,7 +2,7 @@
 
 Never miss the next episode of your shows.
 
-TV Tracker is a paid-upfront SwiftUI app built around one fast chronological list. People subscribe to the shows they care about, see confirmed upcoming dates in their chosen time zone, and mark episodes as watched.
+TV Tracker is a SwiftUI app built around one fast chronological list. People subscribe to the shows they care about, see confirmed upcoming dates in their chosen time zone, and mark episodes as watched.
 
 ## Motivation
 
@@ -31,7 +31,7 @@ TV information and schedule data are provided by [TVmaze](https://www.tvmaze.com
 
 TVmaze requires no API key. To test optional TMDB coverage, copy `TVTime/Secrets.xcconfig.example` to `TVTime/Secrets.xcconfig` and add a read access token. `Secrets.xcconfig` is ignored by Git and must never be committed.
 
-Do not enable TMDB in a paid release until commercial permission is confirmed. The complete release gates are in [APP_STORE_CHECKLIST.md](APP_STORE_CHECKLIST.md).
+Do not enable TMDB in a public release until the intended use is covered by provider permission. The complete release gates are in [APP_STORE_CHECKLIST.md](APP_STORE_CHECKLIST.md).
 
 ## Privacy And Support
 

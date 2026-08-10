@@ -7,13 +7,12 @@ This document is ready to paste into App Store Connect after the licensing and a
 - Pain: People miss episodes because release dates are scattered across services.
 - Product: Upcoming episodes for your shows, in one list.
 - Core job: Tell subscribers what airs next and when.
-- Price: Paid upfront, planned at US$0.99, with no login or in-app purchase.
 
 ## App Information
 
 - Name: `TV Tracker`
 - Primary language: English (U.S.)
-- Bundle ID: `app.tvtracker.timeline`
+- Bundle ID: `com.noriesloo.tvtracker`
 - SKU suggestion: `tvtracker-ios-001`
 - Primary category: Entertainment
 - Secondary category: Lifestyle
@@ -63,15 +62,15 @@ TV Tracker is an independent app and is not affiliated with TV Time or Whip Medi
 
 ## URLs
 
-- Privacy Policy: `https://github.com/2gavy/tvtime/blob/main/PRIVACY.md`
-- Support URL: `https://github.com/2gavy/tvtime/blob/main/SUPPORT.md`
+- Privacy Policy: Public HTTPS URL required before submission
+- Support URL: Public HTTPS URL required before submission
 - Marketing URL: Optional for version 1.0
 
-Confirm that the repository is public and these pages load while signed out before submission.
+Confirm that both pages load while signed out before submission.
 
 ## App Review Notes
 
-TV Tracker is a paid-upfront app. It contains no login, account registration, in-app purchase, subscription, advertising, or analytics SDK.
+TV Tracker contains no login, account registration, in-app purchase, subscription, advertising, or analytics SDK.
 
 The app opens directly to the Shows timeline. On a new install, use Discover to search for a show and tap Subscribe. Return to Shows to see its episode schedule. Long-press an aired episode to mark the aired episodes in that season as watched. Settings contains subscriptions, watched history, time-zone selection, privacy, support, and data-provider credits.
 
@@ -103,10 +102,9 @@ Use one accepted 6.9-inch portrait size for the full set: `1320 x 2868`, `1290 x
 
 ## Required Account Actions
 
-1. Enroll in the paid Apple Developer Program if the current team is still a Personal Team.
+1. Enroll in the Apple Developer Program if the current team is still a Personal Team.
 2. Accept the latest agreements in App Store Connect Business.
-3. Complete paid-app banking and tax forms.
-4. Register `app.tvtracker.timeline` and enable iCloud key-value storage.
-5. Create the iOS app record before uploading the first build.
-6. Set price and availability.
-7. Complete age rating, content rights, privacy answers, and review contact information.
+3. Register `com.noriesloo.tvtracker` and enable iCloud key-value storage.
+4. Create the iOS app record before uploading the first build.
+5. Set availability.
+6. Complete age rating, content rights, privacy answers, and review contact information.
