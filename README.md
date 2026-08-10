@@ -4,6 +4,15 @@ Never miss the next episode of your shows.
 
 TV Tracker is a SwiftUI app built around one fast chronological list. People subscribe to the shows they care about, see confirmed upcoming dates in their chosen time zone, and mark episodes as watched.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/shows.png" alt="Chronological episode timeline" width="23%">
+  <img src="docs/screenshots/discover.png" alt="Show discovery and search" width="23%">
+  <img src="docs/screenshots/show-details.png" alt="Show synopsis and subscription" width="23%">
+  <img src="docs/screenshots/settings.png" alt="Activity and app settings" width="23%">
+</p>
+
 ## Motivation
 
 This project began after the announcement that TV Time would shut down on July 15, 2026. [TechCrunch reported that the company was shifting its focus toward enterprise AI products](https://techcrunch.com/2026/07/02/popular-tv-tracking-app-tv-time-is-shutting-down-as-company-focuses-on-ai/).
