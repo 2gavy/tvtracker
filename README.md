@@ -10,10 +10,6 @@ This project began after the announcement that TV Time would shut down on July 1
 
 TV Tracker is an independent product and is not affiliated with or endorsed by TV Time or Whip Media.
 
-## Screenshot
-
-[![TV Tracker schedule](docs/tv-time-reborn.jpeg)](docs/tv-time-reborn.jpeg)
-
 ## Product
 
 - **Shows** presents subscribed TV episodes and movie releases in one chronological list.
@@ -21,17 +17,7 @@ TV Tracker is an independent product and is not affiliated with or endorsed by T
 - **Settings** manages subscriptions, watched history, time zone, appearance, support, and legal information.
 - Subscriptions and watched history stay private and automatically sync through the user's iCloud account for reinstall recovery. TV Tracker has no separate account, advertising, analytics, or tracking SDK.
 
-TV information and schedule data are provided by [TVmaze](https://www.tvmaze.com) under CC BY-SA. Optional movie and Asian catalogue coverage uses TMDB after commercial access is approved. This product uses the TMDB API but is not endorsed or certified by TMDB.
-
-## Development
-
-1. Open `TVTime.xcodeproj` in Xcode 16 or newer.
-2. Choose an iPhone simulator.
-3. Run the `TVTime` scheme.
-
-TVmaze requires no API key. To test optional TMDB coverage, copy `TVTime/Secrets.xcconfig.example` to `TVTime/Secrets.xcconfig` and add a read access token. `Secrets.xcconfig` is ignored by Git and must never be committed.
-
-Do not enable TMDB in a public release until the intended use is covered by provider permission. The complete release gates are in [APP_STORE_CHECKLIST.md](APP_STORE_CHECKLIST.md).
+TV information and schedule data are provided by [TVmaze](https://www.tvmaze.com) under CC BY-SA. Additional catalogue coverage may be provided by TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 ## Privacy And Support
 
