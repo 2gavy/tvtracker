@@ -7,10 +7,10 @@ TV Tracker is a SwiftUI app built around one fast chronological list. People sub
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/shows.png" alt="Chronological episode timeline" width="23%">
-  <img src="docs/screenshots/discover.png" alt="Show discovery and search" width="23%">
-  <img src="docs/screenshots/show-details.png" alt="Show synopsis and subscription" width="23%">
-  <img src="docs/screenshots/settings.png" alt="Activity and app settings" width="23%">
+  <img src="docs/screenshots/shows.webp" alt="Chronological episode timeline" width="23%">
+  <img src="docs/screenshots/discover.webp" alt="Show discovery and search" width="23%">
+  <img src="docs/screenshots/show-details.webp" alt="Show synopsis and subscription" width="23%">
+  <img src="docs/screenshots/settings.webp" alt="Activity and app settings" width="23%">
 </p>
 
 ## Motivation
