@@ -78,7 +78,7 @@ private struct StatsGrid: View {
                 )
             }
             .buttonStyle(.plain)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 64, maxHeight: 64)
             .accessibilityLabel("Subscribed shows, \(store.followedShows.count)")
 
             Divider()
@@ -91,17 +91,18 @@ private struct StatsGrid: View {
                 )
             }
             .buttonStyle(.plain)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 64, maxHeight: 64)
             .accessibilityLabel("Episodes watched, \(store.watchedAiringIDs.count)")
 
             Divider()
                 .frame(height: 44)
 
             StatMetric(
-                value: store.watchedDuration,
+                value: compactWatchTime.value,
+                unit: compactWatchTime.unit,
                 label: "Watch time"
             )
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 64, maxHeight: 64)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Watched time, \(store.watchedDuration)")
         }
@@ -112,29 +113,49 @@ private struct StatsGrid: View {
                 .stroke(AppTheme.separator.opacity(0.3), lineWidth: 0.5)
         }
     }
+
+    private var compactWatchTime: (value: String, unit: String) {
+        guard store.watchedMinutes >= 60 else {
+            return ("\(store.watchedMinutes)", "m")
+        }
+        let hours = Double(store.watchedMinutes) / 60
+        let value = hours.rounded() == hours
+            ? "\(Int(hours))"
+            : String(format: "%.1f", hours)
+        return (value, "h")
+    }
 }
 
 private struct StatMetric: View {
     let value: String
+    var unit: String? = nil
     let label: String
 
     var body: some View {
         VStack(spacing: 5) {
-            Text(value)
-                .font(.title.weight(.bold))
-                .monospacedDigit()
-                .foregroundStyle(AppTheme.accent)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(value)
+                    .font(.title2.weight(.bold))
+                    .monospacedDigit()
+
+                if let unit {
+                    Text(unit)
+                        .font(.caption.weight(.bold))
+                }
+            }
+            .foregroundStyle(AppTheme.accent)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .center)
 
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .lineLimit(2)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 18, alignment: .center)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, minHeight: 64, maxHeight: 64, alignment: .center)
         .contentShape(Rectangle())
     }
 }
@@ -274,17 +295,27 @@ private struct AboutView: View {
 
             Section("Credits") {
                 Link("TV information provided by TVmaze", destination: URL(string: "https://www.tvmaze.com")!)
+                Link(
+                    "TVmaze data license: CC BY-SA 4.0",
+                    destination: URL(string: "https://creativecommons.org/licenses/by-sa/4.0/")!
+                )
 
-                HStack(spacing: 14) {
-                    Image("TMDBLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 72, height: 28)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        Image("TMDBLogo")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 72, height: 28)
+
+                        Text("Movie and show data by TMDB")
+                            .font(.subheadline.weight(.medium))
+                    }
 
                     Text("This product uses the TMDB API but is not endorsed or certified by TMDB.")
-                        .font(.footnote)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                .padding(.vertical, 2)
             }
 
         }

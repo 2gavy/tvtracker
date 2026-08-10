@@ -1,10 +1,5 @@
 import Foundation
 
-struct TVMazeDiscovery {
-    let airingSoon: [Show]
-    let premieres: [Show]
-}
-
 struct TVMazeClient {
     enum APIError: LocalizedError {
         case invalidRequest
@@ -38,11 +33,39 @@ struct TVMazeClient {
         return results.prefix(20).map { makeShow($0.show) }
     }
 
+    func matchingShow(for show: Show) async throws -> Show? {
+        let requestedTitle = normalizedTitle(show.title)
+        guard let match = try await searchShows(query: show.title).first(where: {
+            normalizedTitle($0.title) == requestedTitle
+        }), let tvmazeID = match.tvmazeID else { return nil }
+        return show.withTVMazeID(tvmazeID)
+    }
+
+    func browseShows(page: Int) async throws -> [Show] {
+        guard var components = URLComponents(string: "https://api.tvmaze.com/shows") else {
+            throw APIError.invalidRequest
+        }
+        components.queryItems = [URLQueryItem(name: "page", value: String(page))]
+        guard let url = components.url else { throw APIError.invalidRequest }
+
+        let data = try await request(url)
+        let results = try decoder.decode([ShowDTO].self, from: data)
+        return results.lazy
+            .filter {
+                $0.image?.medium != nil
+                    && !$0.genres.isEmpty
+                    && $0.type != "News"
+                    && $0.type != "Sports"
+            }
+            .prefix(60)
+            .map(makeShow)
+    }
+
     func discoverSchedule(
         starting date: Date = .now,
         days: Int = 7,
         timeZone: TimeZone = .current
-    ) async throws -> TVMazeDiscovery {
+    ) async throws -> [Show] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         let formatter = DateFormatter()
@@ -50,8 +73,12 @@ struct TVMazeClient {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd"
+        let cacheKey = "\(timeZone.identifier):\(formatter.string(from: date)):\(days)"
+        if let cached = await TVMazeDiscoveryCache.shared.value(for: cacheKey) {
+            return cached
+        }
 
-        var candidates: [Int: DiscoveryCandidate] = [:]
+        var candidates: [Int: ShowDTO] = [:]
         for offset in 0..<days {
             guard let day = calendar.date(byAdding: .day, value: offset, to: date),
                   var broadcastComponents = URLComponents(string: "https://api.tvmaze.com/schedule"),
@@ -73,71 +100,67 @@ struct TVMazeClient {
             let broadcasts = try decoder.decode([ScheduleEpisodeDTO].self, from: broadcastPayload)
             let streams = try decoder.decode([WebScheduleEpisodeDTO].self, from: streamingPayload)
 
-            func addCandidate(show: ShowDTO, season: Int?, number: Int?) {
+            func addCandidate(show: ShowDTO) {
                 guard show.image?.medium != nil,
                       !show.genres.isEmpty,
                       show.type != "News",
                       show.type != "Sports" else { return }
-                let candidate = DiscoveryCandidate(
-                    show: show,
-                    isPremiere: season == 1 && (number ?? 0) <= 2
-                )
-                if let existing = candidates[show.id] {
-                    candidates[show.id] = DiscoveryCandidate(
-                        show: existing.show,
-                        isPremiere: existing.isPremiere || candidate.isPremiere
-                    )
-                } else {
-                    candidates[show.id] = candidate
-                }
+                candidates[show.id] = show
             }
 
             broadcasts.forEach {
-                addCandidate(show: $0.show, season: $0.season, number: $0.number)
+                addCandidate(show: $0.show)
             }
             streams.forEach {
-                addCandidate(show: $0.embedded.show, season: $0.season, number: $0.number)
+                addCandidate(show: $0.embedded.show)
             }
         }
 
         let ranked = candidates.values.sorted { left, right in
-            let leftWeight = left.show.weight ?? 0
-            let rightWeight = right.show.weight ?? 0
+            let leftWeight = left.weight ?? 0
+            let rightWeight = right.weight ?? 0
             if leftWeight != rightWeight { return leftWeight > rightWeight }
-            return left.show.name < right.show.name
+            return left.name < right.name
         }
-        return TVMazeDiscovery(
-            airingSoon: ranked.prefix(40).map { makeShow($0.show) },
-            premieres: ranked.filter(\.isPremiere).prefix(20).map { makeShow($0.show) }
-        )
+        let result = ranked.prefix(40).map(makeShow)
+        await TVMazeDiscoveryCache.shared.store(result, for: cacheKey)
+        return result
     }
 
     func episodes(
         for show: Show,
-        includingHistory: Bool = false,
         timeZone: TimeZone = .current
-    ) async throws -> [Airing] {
+    ) async throws -> EpisodeSchedulePage {
         guard let tvmazeID = show.tvmazeID,
-              let url = URL(string: "https://api.tvmaze.com/shows/\(tvmazeID)/episodes") else {
-            return []
+              let seasonsURL = URL(string: "https://api.tvmaze.com/shows/\(tvmazeID)/seasons") else {
+            return EpisodeSchedulePage(episodes: [], loadedSeasons: [])
         }
 
-        let data = try await request(url)
-        let episodes = try decoder.decode([EpisodeDTO].self, from: data)
-        let mapped = episodes.map { item in
-            let date = airDate(for: item, timeZone: timeZone)
-            return Airing(
-                id: episodeIDOffset + item.id,
-                showID: show.id,
-                season: item.season ?? 0,
-                episode: item.number ?? 0,
-                title: item.name,
-                airDate: date,
-                runtime: item.runtime ?? 0,
-                service: show.network
-            )
+        let seasons = try await seasons(for: tvmazeID, url: seasonsURL)
+        let recentSeasons = seasons
+            .filter { $0.number > 0 }
+            .sorted { $0.number > $1.number }
+            .prefix(2)
+        let seasonEpisodes = try await withThrowingTaskGroup(
+            of: [EpisodeDTO].self,
+            returning: [[EpisodeDTO]].self
+        ) { group in
+            for season in recentSeasons {
+                guard let episodesURL = URL(
+                    string: "https://api.tvmaze.com/seasons/\(season.id)/episodes"
+                ) else { continue }
+                group.addTask {
+                    try decoder.decode([EpisodeDTO].self, from: await request(episodesURL))
+                }
+            }
+            var pages: [[EpisodeDTO]] = []
+            for try await page in group { pages.append(page) }
+            return pages
         }
-        .sorted { ($0.airDate ?? .distantFuture) < ($1.airDate ?? .distantFuture) }
+        var mapped = seasonEpisodes.flatMap { episodes in
+            episodes.map { makeAiring($0, show: show, timeZone: timeZone) }
+        }
+        mapped.sort { ($0.airDate ?? .distantFuture) < ($1.airDate ?? .distantFuture) }
 
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
@@ -147,7 +170,7 @@ struct TVMazeClient {
             value: -7,
             to: startOfToday
         )!
-        let requestedEpisodes = includingHistory ? mapped : mapped.filter { airing in
+        let requestedEpisodes = mapped.filter { airing in
             guard let date = airing.airDate else { return true }
             return date >= startOfLastWeek
         }
@@ -157,7 +180,7 @@ struct TVMazeClient {
         }
 
         if !hasUpcoming && show.status.lowercased() != "ended" {
-            return [Airing(
+            mapped.append(Airing(
                 id: episodeIDOffset - tvmazeID,
                 showID: show.id,
                 season: 0,
@@ -166,14 +189,45 @@ struct TVMazeClient {
                 airDate: nil,
                 runtime: 0,
                 service: show.network
-            )] + requestedEpisodes
+            ))
         }
 
-        return requestedEpisodes
+        return EpisodeSchedulePage(
+            episodes: mapped,
+            loadedSeasons: Set(recentSeasons.map(\.number))
+        )
+    }
+
+    func previousSeasonEpisodes(
+        for show: Show,
+        beforeSeason: Int,
+        timeZone: TimeZone = .current
+    ) async throws -> EpisodeHistoryPage? {
+        guard let tvmazeID = show.tvmazeID,
+              let seasonsURL = URL(string: "https://api.tvmaze.com/shows/\(tvmazeID)/seasons") else {
+            return nil
+        }
+
+        let seasons = try await seasons(for: tvmazeID, url: seasonsURL)
+        let eligible = seasons.filter { $0.number > 0 && $0.number < beforeSeason }
+        guard let season = eligible.max(by: { $0.number < $1.number }),
+              let episodesURL = URL(string: "https://api.tvmaze.com/seasons/\(season.id)/episodes") else {
+            return nil
+        }
+
+        let items = try decoder.decode([EpisodeDTO].self, from: await request(episodesURL))
+        let episodes = items
+            .map { makeAiring($0, show: show, timeZone: timeZone) }
+            .sorted { ($0.airDate ?? .distantFuture) < ($1.airDate ?? .distantFuture) }
+        return EpisodeHistoryPage(
+            episodes: episodes,
+            season: season.number,
+            hasMore: eligible.contains { $0.number < season.number }
+        )
     }
 
     private func request(_ url: URL, canRetry: Bool = true) async throws -> Data {
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
         request.setValue("TVTracker/1.0 iOS", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.server(0) }
@@ -186,17 +240,88 @@ struct TVMazeClient {
         return data
     }
 
-    private func airDate(for episode: EpisodeDTO, timeZone: TimeZone) -> Date? {
+    private func normalizedTitle(_ title: String) -> String {
+        title
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .unicodeScalars
+            .filter(CharacterSet.alphanumerics.contains)
+            .map(String.init)
+            .joined()
+    }
+
+    private func airDate(
+        for episode: EpisodeDTO,
+        show: Show,
+        timeZone: TimeZone
+    ) -> Date? {
+        // TVMaze currently uses noon UTC placeholders for RAW and omits its airtime.
+        if show.tvmazeID == 802,
+           episode.airstamp?.contains("T12:00:00+00:00") == true,
+           let value = episode.airdate {
+            return localBroadcastDate(
+                value,
+                hour: 20,
+                timeZoneIdentifier: "America/New_York"
+            )
+        }
         if let stamp = episode.airstamp {
-            let formatter = ISO8601DateFormatter()
-            if let date = formatter.date(from: stamp) { return date }
+            if let date = try? Date(stamp, strategy: .iso8601) { return date }
         }
         guard let value = episode.airdate else { return nil }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.date(from: value)
+        return calendarDate(value, timeZone: timeZone)
+    }
+
+    private func seasons(for showID: Int, url: URL) async throws -> [SeasonDTO] {
+        if let cached = await TVMazeSeasonCache.shared.value(for: showID) {
+            return cached
+        }
+        let value = try decoder.decode([SeasonDTO].self, from: await request(url))
+        await TVMazeSeasonCache.shared.store(value, for: showID)
+        return value
+    }
+
+    private func calendarDate(_ value: String, timeZone: TimeZone) -> Date? {
+        let components = value.split(separator: "-").compactMap { Int($0) }
+        guard components.count == 3 else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar.date(from: DateComponents(
+            year: components[0],
+            month: components[1],
+            day: components[2]
+        ))
+    }
+
+    private func localBroadcastDate(
+        _ value: String,
+        hour: Int,
+        timeZoneIdentifier: String
+    ) -> Date? {
+        guard let timeZone = TimeZone(identifier: timeZoneIdentifier) else { return nil }
+        let components = value.split(separator: "-").compactMap { Int($0) }
+        guard components.count == 3 else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar.date(from: DateComponents(
+            timeZone: timeZone,
+            year: components[0],
+            month: components[1],
+            day: components[2],
+            hour: hour
+        ))
+    }
+
+    private func makeAiring(_ item: EpisodeDTO, show: Show, timeZone: TimeZone) -> Airing {
+        Airing(
+            id: episodeIDOffset + item.id,
+            showID: show.id,
+            season: item.season ?? 0,
+            episode: item.number ?? 0,
+            title: item.name,
+            airDate: airDate(for: item, show: show, timeZone: timeZone),
+            runtime: item.runtime ?? 0,
+            service: show.network
+        )
     }
 
     private func makeShow(_ item: ShowDTO) -> Show {
@@ -240,24 +365,14 @@ private struct ShowDTO: Decodable {
     let weight: Int?
 }
 
-private struct DiscoveryCandidate {
-    let show: ShowDTO
-    let isPremiere: Bool
-}
-
 private struct ScheduleEpisodeDTO: Decodable {
-    let season: Int?
-    let number: Int?
     let show: ShowDTO
 }
 
 private struct WebScheduleEpisodeDTO: Decodable {
-    let season: Int?
-    let number: Int?
     let embedded: EmbeddedShowDTO
 
     private enum CodingKeys: String, CodingKey {
-        case season, number
         case embedded = "_embedded"
     }
 }
@@ -282,4 +397,63 @@ private struct EpisodeDTO: Decodable {
     let airdate: String?
     let airstamp: String?
     let runtime: Int?
+}
+
+private struct SeasonDTO: Decodable {
+    let id: Int
+    let number: Int
+}
+
+private actor TVMazeSeasonCache {
+    static let shared = TVMazeSeasonCache()
+    private struct Entry {
+        let expiresAt: Date
+        let seasons: [SeasonDTO]
+    }
+    private var entries: [Int: Entry] = [:]
+
+    func value(for showID: Int) -> [SeasonDTO]? {
+        guard let entry = entries[showID], entry.expiresAt > .now else {
+            entries.removeValue(forKey: showID)
+            return nil
+        }
+        return entry.seasons
+    }
+
+    func store(_ seasons: [SeasonDTO], for showID: Int) {
+        entries = entries.filter { $0.value.expiresAt > .now }
+        if entries.count >= 120,
+           let earliest = entries.min(by: { $0.value.expiresAt < $1.value.expiresAt })?.key {
+            entries.removeValue(forKey: earliest)
+        }
+        entries[showID] = Entry(
+            expiresAt: .now.addingTimeInterval(24 * 60 * 60),
+            seasons: seasons
+        )
+    }
+}
+
+private actor TVMazeDiscoveryCache {
+    static let shared = TVMazeDiscoveryCache()
+    private struct Entry {
+        let expiresAt: Date
+        let shows: [Show]
+    }
+    private var entries: [String: Entry] = [:]
+
+    func value(for key: String) -> [Show]? {
+        guard let entry = entries[key], entry.expiresAt > .now else {
+            entries.removeValue(forKey: key)
+            return nil
+        }
+        return entry.shows
+    }
+
+    func store(_ shows: [Show], for key: String) {
+        entries = entries.filter { $0.value.expiresAt > .now }
+        entries[key] = Entry(
+            expiresAt: .now.addingTimeInterval(6 * 60 * 60),
+            shows: shows
+        )
+    }
 }

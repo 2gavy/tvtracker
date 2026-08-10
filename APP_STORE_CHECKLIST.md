@@ -33,3 +33,6 @@ TV Tracker is a paid App Store download with unlimited tracking. It has no free 
 - [x] New users start with no fake subscriptions or schedule entries.
 - [x] Privacy, support, provider credits, and the app version are accessible from Settings.
 - [x] API credentials are excluded from Git.
+- [x] A valid privacy manifest declares the app's `UserDefaults` required-reason API usage.
+- [x] The app declares that it does not use non-exempt encryption.
+- [x] TVmaze attribution and the CC BY-SA 4.0 license are linked from the in-app Credits section.

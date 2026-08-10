@@ -7,6 +7,7 @@ enum AppTheme {
         }
         return UIColor(red: 0.55, green: 0.40, blue: 0, alpha: 1)
     })
+    static let completed = Color(uiColor: .systemGreen)
     static let surface = Color(uiColor: .secondarySystemBackground)
     static let elevated = Color(uiColor: .tertiarySystemBackground)
     static let separator = Color(uiColor: .separator)

@@ -84,6 +84,28 @@ struct Show: Identifiable, Hashable, Codable {
     }
 }
 
+extension Show {
+    func withTVMazeID(_ tvmazeID: Int) -> Show {
+        Show(
+            id: id,
+            tvmazeID: tvmazeID,
+            tmdbID: tmdbID,
+            anilistID: anilistID,
+            title: title,
+            network: network,
+            genres: genres,
+            imageName: imageName,
+            imageURL: imageURL,
+            tintHex: tintHex,
+            summary: summary,
+            status: status,
+            mediaType: mediaType,
+            releaseDate: releaseDate,
+            runtime: runtime
+        )
+    }
+}
+
 struct Airing: Identifiable, Hashable, Codable {
     let id: Int
     let showID: Int
@@ -106,6 +128,17 @@ struct AiringSection: Identifiable {
     let airings: [Airing]
 
     var id: String { title }
+}
+
+struct EpisodeHistoryPage {
+    let episodes: [Airing]
+    let season: Int
+    let hasMore: Bool
+}
+
+struct EpisodeSchedulePage {
+    let episodes: [Airing]
+    let loadedSeasons: Set<Int>
 }
 
 enum MediaFilter: String, CaseIterable, Identifiable {

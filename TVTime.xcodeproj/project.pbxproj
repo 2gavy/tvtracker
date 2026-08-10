@@ -20,6 +20,9 @@
 		A1000000000000000000000D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* Assets.xcassets */; };
 		A1000000000000000000000E /* TMDBClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* TMDBClient.swift */; };
 		A1000000000000000000000F /* CloudStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* CloudStateStore.swift */; };
+		A10000000000000000000010 /* PosterImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000015 /* PosterImage.swift */; };
+		A10000000000000000000011 /* LocalDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* LocalDataStore.swift */; };
+		A10000000000000000000012 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +43,9 @@
 		B10000000000000000000012 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		B10000000000000000000013 /* CloudStateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudStateStore.swift; sourceTree = "<group>"; };
 		B10000000000000000000014 /* TVTime.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TVTime.entitlements; sourceTree = "<group>"; };
+		B10000000000000000000015 /* PosterImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterImage.swift; sourceTree = "<group>"; };
+		B10000000000000000000016 /* LocalDataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataStore.swift; sourceTree = "<group>"; };
+		B10000000000000000000017 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -72,6 +78,8 @@
 				B10000000000000000000004 /* Theme.swift */,
 				B10000000000000000000005 /* RootView.swift */,
 				B10000000000000000000006 /* ShowsView.swift */,
+				B10000000000000000000015 /* PosterImage.swift */,
+				B10000000000000000000016 /* LocalDataStore.swift */,
 				B10000000000000000000007 /* DiscoverView.swift */,
 				B10000000000000000000008 /* FollowingView.swift */,
 				B10000000000000000000009 /* ProfileView.swift */,
@@ -79,6 +87,7 @@
 				B10000000000000000000010 /* TMDBClient.swift */,
 				B10000000000000000000012 /* Config.xcconfig */,
 				B10000000000000000000014 /* TVTime.entitlements */,
+				B10000000000000000000017 /* PrivacyInfo.xcprivacy */,
 				B1000000000000000000000A /* Assets.xcassets */,
 			);
 			path = TVTime;
@@ -156,6 +165,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000000000000000000000D /* Assets.xcassets in Resources */,
+				A10000000000000000000012 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -178,6 +188,8 @@
 				A1000000000000000000000B /* TVMazeClient.swift in Sources */,
 				A1000000000000000000000E /* TMDBClient.swift in Sources */,
 				A1000000000000000000000F /* CloudStateStore.swift in Sources */,
+				A10000000000000000000010 /* PosterImage.swift in Sources */,
+				A10000000000000000000011 /* LocalDataStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -235,11 +247,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = TVTime/TVTime.entitlements;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "TV Tracker";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_TMDBReadAccessToken = "$(TMDB_READ_ACCESS_TOKEN)";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -248,6 +261,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CLOUD_SYNC";
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
@@ -259,11 +273,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = TVTime/TVTime.entitlements;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "TV Tracker";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_TMDBReadAccessToken = "$(TMDB_READ_ACCESS_TOKEN)";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -272,6 +287,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CLOUD_SYNC";
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;

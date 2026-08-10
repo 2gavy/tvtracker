@@ -2,15 +2,23 @@ import SwiftUI
 
 struct DiscoverView: View {
     @EnvironmentObject private var store: ShowStore
+    let isActive: Bool
+    @Binding var carouselIsInteracting: Bool
     @State private var query = ""
     @State private var catalogSearchResults: [Show] = []
     @State private var isSearching = false
     @State private var searchError: String?
     @State private var liveShows: [Show] = []
-    @State private var premiereShows: [Show] = []
     @State private var trendingAnime: [Show] = []
     @State private var asianHighlights: [Show] = []
+    @State private var catalogShows: [Show] = []
     @State private var isLoadingDiscovery = false
+    @State private var isLoadingMoreDiscovery = false
+    @State private var catalogPage = 0
+    @State private var asianPage = 1
+    @State private var discoveryGeneration = 0
+    @State private var loadMoreTask: Task<Void, Never>?
+    @State private var carouselReleaseTask: Task<Void, Never>?
     @State private var mediaFilter: MediaFilter = .all
     @State private var providerFilter = "All services"
     @State private var genreFilter = "All"
@@ -18,7 +26,8 @@ struct DiscoverView: View {
 
     private let providers = [
         "All services", "Netflix", "Apple TV+", "Hulu", "Max", "Disney+",
-        "Prime Video", "Paramount+", "Peacock", "CBS", "NBC", "ABC", "HBO"
+        "Prime Video", "Paramount+", "Peacock", "meWATCH", "Channel 5",
+        "Channel 8", "CBS", "NBC", "ABC", "HBO"
     ]
     private let genres = ["All", "Drama", "Comedy", "Reality", "Crime", "Action", "Sci-Fi", "Anime"]
     private let client = TVMazeClient()
@@ -95,16 +104,24 @@ struct DiscoverView: View {
                 mediaFilter = .all
                 providerFilter = "All services"
             }
-            .task(id: tmdbClient.isConfigured) {
-                await loadAsianHighlights()
+            .task(id: isActive) {
+                guard isActive else { return }
+                async let discovery: Void = loadDiscovery()
+                async let asian: Void = loadAsianHighlights()
+                _ = await (discovery, asian)
             }
-            .task {
-                await loadDiscovery()
+            .onChange(of: isActive) { _, active in
+                if !active {
+                    loadMoreTask?.cancel()
+                    loadMoreTask = nil
+                    releaseDiscoveryContent()
+                }
             }
         }
         .fullScreenCover(item: $selectedShow) { show in
             ShowDetailView(show: show)
         }
+        .environment(\.carouselInteractionChanged, updateCarouselInteraction)
     }
 
     private var browseContent: some View {
@@ -117,21 +134,23 @@ struct DiscoverView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 64)
                 } else {
-                    let trending = filteredBrowseShows(liveShows)
-                    let trendingIDs = Set(trending.map(\.id))
+                    let trending = filteredBrowseShows(liveShows + catalogShows)
                     let recommendations = recommendedShows(
                         for: .now,
-                        candidates: discoveryCandidates,
-                        excluding: trendingIDs
+                        candidates: discoveryCandidates
                     )
-                    let premieres = filteredBrowseShows(premiereShows)
-                    let anime = filteredBrowseShows(trendingAnime)
+                    let anime = filteredBrowseShows(
+                        trendingAnime + catalogShows.filter(isAnimeCandidate)
+                    )
                     let asian = filteredBrowseShows(asianHighlights)
+                    let local = filteredBrowseShows(MediacorpCatalog.shows)
 
                     if !trending.isEmpty {
                         PosterCarousel(
                             title: "Trending",
-                            shows: Array(trending.prefix(16)),
+                            shows: trending,
+                            generation: discoveryGeneration,
+                            onLoadMore: requestMoreDiscovery,
                             onSelect: { selectedShow = $0 }
                         )
                     }
@@ -139,22 +158,18 @@ struct DiscoverView: View {
                     if !recommendations.isEmpty {
                         RecommendationsCarousel(
                             shows: recommendations,
-                            onSelect: { selectedShow = $0 }
-                        )
-                    }
-
-                    if !premieres.isEmpty {
-                        PosterCarousel(
-                            title: "New series",
-                            shows: Array(premieres.prefix(12)),
+                            generation: discoveryGeneration,
+                            onLoadMore: requestMoreDiscovery,
                             onSelect: { selectedShow = $0 }
                         )
                     }
 
                     if !anime.isEmpty, genreFilter == "All" || genreFilter == "Anime" {
                         PosterCarousel(
-                            title: "Anime now",
-                            shows: Array(anime.prefix(16)),
+                            title: "Anime & animation",
+                            shows: anime,
+                            generation: discoveryGeneration,
+                            onLoadMore: requestMoreDiscovery,
                             onSelect: { selectedShow = $0 }
                         )
                     }
@@ -162,16 +177,28 @@ struct DiscoverView: View {
                     if !asian.isEmpty {
                         PosterCarousel(
                             title: "Across Asia",
-                            shows: Array(asian.prefix(16)),
+                            shows: asian,
+                            generation: discoveryGeneration,
+                            onLoadMore: requestMoreDiscovery,
+                            onSelect: { selectedShow = $0 }
+                        )
+                    }
+
+                    if !local.isEmpty {
+                        PosterCarousel(
+                            title: "Made in Singapore",
+                            shows: local,
+                            generation: 0,
+                            onLoadMore: {},
                             onSelect: { selectedShow = $0 }
                         )
                     }
 
                     if trending.isEmpty,
                        recommendations.isEmpty,
-                       premieres.isEmpty,
                        anime.isEmpty,
-                       asian.isEmpty {
+                       asian.isEmpty,
+                       local.isEmpty {
                         ContentUnavailableView(
                             "No matching titles",
                             systemImage: "play.tv"
@@ -195,13 +222,17 @@ struct DiscoverView: View {
 
     private var discoveryCandidates: [Show] {
         var seen: Set<Int> = []
-        return (liveShows + premiereShows + trendingAnime + asianHighlights + store.shows)
+        return (liveShows + trendingAnime + asianHighlights + catalogShows
+            + MediacorpCatalog.shows + store.shows)
             .filter { seen.insert($0.id).inserted }
     }
 
     private func filteredBrowseShows(_ shows: [Show]) -> [Show] {
-        shows.filter { show in
-            mediaFilter.includes(show)
+        var seen: Set<String> = []
+        return shows.filter { show in
+            let key = discoveryKey(show)
+            return seen.insert(key).inserted
+                && mediaFilter.includes(show)
                 && (providerFilter == "All services" || matchesProvider(show.network))
                 && matchesGenre(show)
         }
@@ -215,10 +246,19 @@ struct DiscoverView: View {
         return show.genres.contains { $0.localizedCaseInsensitiveCompare(genreFilter) == .orderedSame }
     }
 
+    private func isAnimeCandidate(_ show: Show) -> Bool {
+        let network = show.network.lowercased()
+        return show.genres.contains {
+            $0.localizedCaseInsensitiveContains("animation")
+                || $0.localizedCaseInsensitiveCompare("Anime") == .orderedSame
+        } || ["tokyo", "ntv", "mbs", "fuji", "tv asahi"].contains {
+            network.contains($0)
+        }
+    }
+
     private func recommendedShows(
         for date: Date,
-        candidates: [Show],
-        excluding excludedIDs: Set<Int>
+        candidates: [Show]
     ) -> [Show] {
         let followed = store.followedShows
         let followedGenres = followed.flatMap(\.genres)
@@ -231,10 +271,8 @@ struct DiscoverView: View {
                 + (components.day ?? 0)
                 + 97
         )
-        var generator = DailyRandomNumberGenerator(state: daySeed)
         let matches = candidates.filter { show in
             !store.isFollowing(show)
-                && !excludedIDs.contains(show.id)
                 && mediaFilter.includes(show)
                 && (providerFilter == "All services" || matchesProvider(show.network))
                 && matchesGenre(show)
@@ -248,12 +286,24 @@ struct DiscoverView: View {
             return genreScore + networkScore
         }
 
-        return Array(
-            matches
-                .shuffled(using: &generator)
-                .sorted { affinityScore(for: $0) > affinityScore(for: $1) }
-                .prefix(8)
-        )
+        let ranked: [RankedRecommendation] = matches.map { show in
+            RankedRecommendation(
+                show: show,
+                score: affinityScore(for: show),
+                rank: dailyRank(showID: show.id, seed: daySeed)
+            )
+        }
+        return ranked.sorted { left, right in
+            if left.score != right.score { return left.score > right.score }
+            return left.rank < right.rank
+        }.map(\.show)
+    }
+
+    private func dailyRank(showID: Int, seed: UInt64) -> UInt64 {
+        var value = UInt64(bitPattern: Int64(showID)) &+ seed &+ 0x9E3779B97F4A7C15
+        value = (value ^ (value >> 30)) &* 0xBF58476D1CE4E5B9
+        value = (value ^ (value >> 27)) &* 0x94D049BB133111EB
+        return value ^ (value >> 31)
     }
 
     @ViewBuilder
@@ -297,7 +347,7 @@ struct DiscoverView: View {
         catalogSearchResults = []
         do {
             try await Task.sleep(for: .milliseconds(350))
-            var results = store.shows.filter {
+            var results = (MediacorpCatalog.shows + store.shows).filter {
                 $0.title.localizedCaseInsensitiveContains(trimmedQuery)
             }
             var lastError: Error?
@@ -341,11 +391,17 @@ struct DiscoverView: View {
             options: [.caseInsensitive, .diacriticInsensitive],
             locale: .current
         )
-        return unique.enumerated().sorted { left, right in
-            let leftRank = searchRank(left.element.title, query: foldedQuery)
-            let rightRank = searchRank(right.element.title, query: foldedQuery)
-            return leftRank == rightRank ? left.offset < right.offset : leftRank < rightRank
-        }.map(\.element)
+        let ranked: [RankedSearchResult] = unique.enumerated().map { offset, show in
+            RankedSearchResult(
+                show: show,
+                offset: offset,
+                rank: searchRank(show.title, query: foldedQuery)
+            )
+        }
+        return ranked.sorted { left, right in
+            if left.rank != right.rank { return left.rank < right.rank }
+            return left.offset < right.offset
+        }.map(\.show)
     }
 
     private func searchRank(_ title: String, query: String) -> Int {
@@ -365,38 +421,225 @@ struct DiscoverView: View {
             return
         }
         do {
-            asianHighlights = try await tmdbClient.discoverAsianTitles()
+            let incoming = try await tmdbClient.discoverAsianTitles(page: 1)
+            guard isActive, !Task.isCancelled else { return }
+            asianHighlights = incoming
+            asianPage = 2
         } catch {
+            guard isActive else { return }
             asianHighlights = []
         }
     }
 
     private func loadDiscovery() async {
         isLoadingDiscovery = true
-        async let scheduleResult: TVMazeDiscovery? = try? await client.discoverSchedule(
+        async let scheduleResult: [Show]? = try? await client.discoverSchedule(
             timeZone: store.timeZone
         )
         let schedule = await scheduleResult
-        guard !Task.isCancelled else { return }
-        liveShows = schedule?.airingSoon ?? []
-        premiereShows = schedule?.premieres ?? []
+        guard isActive, !Task.isCancelled else { return }
+        liveShows = schedule ?? []
+        catalogShows = []
+        catalogPage = 0
+        discoveryGeneration &+= 1
         trendingAnime = liveShows.filter { show in
-            show.genres.contains { $0.localizedCaseInsensitiveCompare("Anime") == .orderedSame }
+            isAnimeCandidate(show)
         }
         isLoadingDiscovery = false
     }
+
+    private func releaseDiscoveryContent() {
+        liveShows = []
+        trendingAnime = []
+        asianHighlights = []
+        catalogShows = []
+        isLoadingDiscovery = false
+        isLoadingMoreDiscovery = false
+        catalogPage = 0
+        asianPage = 1
+        discoveryGeneration &+= 1
+    }
+
+    private func requestMoreDiscovery() {
+        guard isActive, loadMoreTask == nil else { return }
+        loadMoreTask = Task {
+            await loadMoreDiscovery()
+            loadMoreTask = nil
+        }
+    }
+
+    private func loadMoreDiscovery() async {
+        guard isActive, !isLoadingMoreDiscovery else { return }
+        isLoadingMoreDiscovery = true
+        defer { isLoadingMoreDiscovery = false }
+
+        async let catalogResult: [Show]? = try? await client.browseShows(page: catalogPage)
+        async let asianResult: [Show]? = tmdbClient.isConfigured
+            ? (try? await tmdbClient.discoverAsianTitles(page: asianPage))
+            : nil
+
+        let (catalog, asian) = await (catalogResult, asianResult)
+        guard isActive, !Task.isCancelled else { return }
+        if let catalog, !catalog.isEmpty {
+            catalogShows = appendingUnique(catalog, to: catalogShows)
+            catalogPage += 1
+        } else {
+            catalogPage = 0
+        }
+        if let asian, !asian.isEmpty {
+            asianHighlights = appendingUnique(asian, to: asianHighlights)
+            asianPage += 1
+        } else {
+            asianPage = 1
+        }
+        discoveryGeneration &+= 1
+    }
+
+    private func appendingUnique(_ incoming: [Show], to existing: [Show]) -> [Show] {
+        var result = existing
+        var keys = Set(existing.map(discoveryKey))
+        result.append(contentsOf: incoming.filter { keys.insert(discoveryKey($0)).inserted })
+        if result.count > 360 {
+            result = Array(result.suffix(300))
+        }
+        return result
+    }
+
+    private func discoveryKey(_ show: Show) -> String {
+        let title = show.title.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: .current
+        )
+        return "\(show.mediaType.rawValue):\(title)"
+    }
+
+    private func updateCarouselInteraction(_ isInteracting: Bool) {
+        carouselReleaseTask?.cancel()
+        if isInteracting {
+            carouselIsInteracting = true
+            return
+        }
+        carouselReleaseTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(140))
+            guard !Task.isCancelled else { return }
+            carouselIsInteracting = false
+        }
+    }
 }
 
-private struct DailyRandomNumberGenerator: RandomNumberGenerator {
-    var state: UInt64
+private struct CarouselInteractionKey: EnvironmentKey {
+    static let defaultValue: (Bool) -> Void = { _ in }
+}
 
-    mutating func next() -> UInt64 {
-        state &+= 0x9E3779B97F4A7C15
-        var value = state
-        value = (value ^ (value >> 30)) &* 0xBF58476D1CE4E5B9
-        value = (value ^ (value >> 27)) &* 0x94D049BB133111EB
-        return value ^ (value >> 31)
+private extension EnvironmentValues {
+    var carouselInteractionChanged: (Bool) -> Void {
+        get { self[CarouselInteractionKey.self] }
+        set { self[CarouselInteractionKey.self] = newValue }
     }
+}
+
+private extension View {
+    func shieldsTabSwipeWhileDragging() -> some View {
+        modifier(CarouselSwipeShield())
+    }
+}
+
+private struct CarouselSwipeShield: ViewModifier {
+    @Environment(\.carouselInteractionChanged) private var interactionChanged
+
+    func body(content: Content) -> some View {
+        content.simultaneousGesture(
+            DragGesture(minimumDistance: 5)
+                .onChanged { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    interactionChanged(true)
+                }
+                .onEnded { _ in interactionChanged(false) }
+        )
+    }
+}
+
+private enum MediacorpCatalog {
+    static let shows = [
+        Show(
+            id: 3_000_283_848,
+            tvmazeID: nil,
+            tmdbID: 283_848,
+            title: "Emerald Hill - The Little Nyonya Story",
+            network: "Channel 8",
+            genres: ["Drama", "Romance", "History"],
+            imageName: nil,
+            imageURL: URL(string: "https://media.themoviedb.org/t/p/w500/rY3Ppmb9TNa8nh3zoTE3Prk10J3.jpg"),
+            tintHex: "C99B55",
+            summary: "Three generations of women navigate family secrets, identity and survival in a Peranakan household.",
+            status: "Ended",
+            runtime: 46
+        ),
+        Show(
+            id: 1_000_048_998,
+            tvmazeID: 48_998,
+            title: "The Little Nyonya",
+            network: "Channel 8",
+            genres: ["Drama", "Romance", "History"],
+            imageName: nil,
+            imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/263/659096.jpg"),
+            tintHex: "D6A85F",
+            summary: "A determined young Nyonya fights prejudice and hardship while rebuilding her family's fortunes.",
+            status: "Ended",
+            runtime: 45
+        ),
+        Show(
+            id: 1_000_056_970,
+            tvmazeID: 56_970,
+            title: "Titoudao",
+            network: "meWATCH",
+            genres: ["Drama", "History"],
+            imageName: nil,
+            imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/350/875753.jpg"),
+            tintHex: "C9574F",
+            summary: "A village girl rises through grit and talent to become a celebrated wayang performer.",
+            status: "Ended",
+            runtime: 45
+        ),
+        Show(
+            id: 1_000_056_866,
+            tvmazeID: 56_866,
+            title: "Last Madame",
+            network: "meWATCH",
+            genres: ["Drama", "Mystery", "History"],
+            imageName: nil,
+            imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/406/1017163.jpg"),
+            tintHex: "8E5A65",
+            summary: "A banker inherits a shophouse and uncovers her great-grandmother's hidden life in 1940s Singapore.",
+            status: "Ended",
+            runtime: 45
+        ),
+        Show(
+            id: 1_000_017_030,
+            tvmazeID: 17_030,
+            title: "Tanglin",
+            network: "Channel 5",
+            genres: ["Drama", "Family"],
+            imageName: nil,
+            imageURL: URL(string: "https://static.tvmaze.com/uploads/images/medium_portrait/57/143061.jpg"),
+            tintHex: "5C9F8B",
+            summary: "Four multiracial families share the everyday joys and complications of life in a Singapore neighbourhood.",
+            status: "Ended",
+            runtime: 30
+        )
+    ]
+}
+
+private struct RankedRecommendation {
+    let show: Show
+    let score: Int
+    let rank: UInt64
+}
+
+private struct RankedSearchResult {
+    let show: Show
+    let offset: Int
+    let rank: Int
 }
 
 private struct GenreTabs: View {
@@ -423,12 +666,15 @@ private struct GenreTabs: View {
                 }
             }
         }
+        .shieldsTabSwipeWhileDragging()
     }
 }
 
 private struct PosterCarousel: View {
     let title: String
     let shows: [Show]
+    let generation: Int
+    let onLoadMore: () -> Void
     let onSelect: (Show) -> Void
 
     var body: some View {
@@ -436,7 +682,12 @@ private struct PosterCarousel: View {
             Text(title)
                 .font(.title3.weight(.bold))
 
-            InfiniteShowScroll(shows: shows, spacing: 13) { show in
+            EndlessShowScroll(
+                shows: shows,
+                spacing: 13,
+                generation: generation,
+                onLoadMore: onLoadMore
+            ) { show in
                 TrendingCard(show: show, onSelect: onSelect)
             }
         }
@@ -485,6 +736,8 @@ private struct TrendingCard: View {
 
 private struct RecommendationsCarousel: View {
     let shows: [Show]
+    let generation: Int
+    let onLoadMore: () -> Void
     let onSelect: (Show) -> Void
 
     var body: some View {
@@ -492,77 +745,49 @@ private struct RecommendationsCarousel: View {
             Text("For you")
                 .font(.title3.weight(.bold))
 
-            InfiniteShowScroll(shows: shows, spacing: 12) { show in
+            EndlessShowScroll(
+                shows: shows,
+                spacing: 12,
+                generation: generation,
+                onLoadMore: onLoadMore
+            ) { show in
                 RecommendationCard(show: show, onSelect: onSelect)
             }
         }
     }
 }
 
-private struct InfiniteShowScroll<Content: View>: View {
+private struct EndlessShowScroll<Content: View>: View {
     let shows: [Show]
     let spacing: CGFloat
+    let generation: Int
+    let onLoadMore: () -> Void
     @ViewBuilder let content: (Show) -> Content
-    @State private var scrollPosition: String?
-
-    private var items: [LoopedShow] {
-        (0..<3).flatMap { cycle in
-            shows.enumerated().map { index, show in
-                LoopedShow(cycle: cycle, index: index, show: show)
-            }
-        }
-    }
+    @State private var lastRequestedGeneration = -1
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: spacing) {
-                ForEach(items) { item in
-                    content(item.show)
-                        .id(item.id)
+                ForEach(shows) { show in
+                    content(show)
+                        .onAppear {
+                            requestMoreIfNeeded(showID: show.id)
+                        }
                 }
             }
             .scrollTargetLayout()
         }
         .scrollTargetBehavior(.viewAligned)
-        .scrollPosition(id: $scrollPosition, anchor: .leading)
-        .task(id: shows.map(\.id)) {
-            guard let first = items.first(where: { $0.cycle == 1 && $0.index == 0 }) else {
-                scrollPosition = nil
-                return
-            }
-            scrollPosition = first.id
-        }
-        .onChange(of: scrollPosition) { _, newPosition in
-            recenterIfNeeded(newPosition)
-        }
+        .shieldsTabSwipeWhileDragging()
     }
 
-    private func recenterIfNeeded(_ id: String?) {
-        guard let id,
-              let visibleItem = items.first(where: { $0.id == id }),
-              visibleItem.cycle != 1,
-              let centeredItem = items.first(where: {
-                  $0.cycle == 1 && $0.index == visibleItem.index
-              }) else {
-            return
-        }
-
-        DispatchQueue.main.async {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                scrollPosition = centeredItem.id
-            }
-        }
+    private func requestMoreIfNeeded(showID: Int) {
+        guard !shows.isEmpty,
+              shows.suffix(4).contains(where: { $0.id == showID }),
+              lastRequestedGeneration != generation else { return }
+        lastRequestedGeneration = generation
+        onLoadMore()
     }
-}
-
-private struct LoopedShow: Identifiable {
-    let cycle: Int
-    let index: Int
-    let show: Show
-
-    var id: String { "\(cycle)-\(index)-\(show.id)" }
 }
 
 private struct RecommendationCard: View {
@@ -782,12 +1007,10 @@ private struct DetailPoster: View {
                     .resizable()
                     .scaledToFit()
             } else if let imageURL = show.imageURL {
-                AsyncImage(url: imageURL) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFit()
-                    } else {
-                        ProgressView().tint(AppTheme.accent)
-                    }
+                CachedPosterImage(url: imageURL, contentMode: .fit, maxPixelSize: 480) {
+                    Image(systemName: "play.tv")
+                        .font(.system(size: 54))
+                        .foregroundStyle(Color(hex: show.tintHex))
                 }
             } else {
                 Image(systemName: "play.tv")

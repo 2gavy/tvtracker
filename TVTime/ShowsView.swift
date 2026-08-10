@@ -1,16 +1,35 @@
 import SwiftUI
+import UIKit
 
 struct ShowsView: View {
     @EnvironmentObject private var store: ShowStore
     let scrollToTodayRequest: Int
     let onDiscover: () -> Void
     @State private var mediaFilter: MediaFilter = .all
+    @State private var isHistoryLoaderArmed = false
+    @State private var isLoadingHistoryFromScroll = false
+    @State private var isHistoryBoundaryVisible = false
+    @State private var pendingHistoryLoad: Task<Void, Never>?
+    @State private var historyLoadTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
             let sections = store.sections(matching: mediaFilter)
             ScrollViewReader { proxy in
                 List {
+                    if !sections.isEmpty && !store.hasLoadedHistory {
+                        Color.clear
+                            .frame(height: 1)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .background {
+                                ScrollTopObserver { isAtTop in
+                                    isHistoryBoundaryVisible = isAtTop
+                                    scheduleHistoryLoadIfNeeded(using: proxy)
+                                }
+                            }
+                    }
+
                     if sections.isEmpty {
                         EmptyScheduleView(
                             title: emptyTitle,
@@ -25,6 +44,7 @@ struct ShowsView: View {
                             Section {
                                 ForEach(section.airings) { airing in
                                     AiringRow(airing: airing)
+                                        .id(airing.id)
                                 }
                             } header: {
                                 SectionHeader(section: section)
@@ -37,14 +57,18 @@ struct ShowsView: View {
                 .scrollContentBackground(.hidden)
                 .animation(.snappy, value: mediaFilter)
                 .refreshable {
-                    if !store.hasLoadedHistory {
-                        await store.loadPreviousSeasons()
-                    } else {
-                        await store.refreshFollowedSchedules()
-                    }
+                    await store.refreshFollowedSchedules(force: true)
                 }
-                .onAppear {
-                    scrollToPresent(proxy, sections: sections, animated: false)
+                .task {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled else { return }
+                    isHistoryLoaderArmed = true
+                    scheduleHistoryLoadIfNeeded(using: proxy)
+                }
+                .onDisappear {
+                    pendingHistoryLoad?.cancel()
+                    historyLoadTask?.cancel()
+                    isHistoryLoaderArmed = false
                 }
                 .onChange(of: mediaFilter) {
                     let updated = store.sections(matching: mediaFilter)
@@ -56,16 +80,7 @@ struct ShowsView: View {
                 }
                 .onChange(of: scrollToTodayRequest) {
                     let updated = store.sections(matching: mediaFilter)
-                    scrollToPresent(proxy, sections: updated, animated: true)
-                }
-                .onChange(of: store.isRefreshingSchedules) { _, isRefreshing in
-                    if !isRefreshing {
-                        scrollToPresent(
-                            proxy,
-                            sections: store.sections(matching: mediaFilter),
-                            animated: true
-                        )
-                    }
+                    scrollToPresent(proxy, sections: updated, animated: false)
                 }
             }
             .background(Color(uiColor: .systemBackground))
@@ -112,18 +127,55 @@ struct ShowsView: View {
         return "There are no known dates for this filter yet."
     }
 
+    private func loadHistoryIfNeeded(using proxy: ScrollViewProxy) {
+        guard isHistoryLoaderArmed,
+              isHistoryBoundaryVisible,
+              !isLoadingHistoryFromScroll,
+              !store.hasLoadedHistory else { return }
+
+        let anchorID = store.sections(matching: mediaFilter)
+            .first?.airings.first?.id
+        isLoadingHistoryFromScroll = true
+        historyLoadTask = Task {
+            defer {
+                isLoadingHistoryFromScroll = false
+                historyLoadTask = nil
+            }
+            let revealedCurrentSeasons = store.revealCurrentSeasonHistory()
+            if !revealedCurrentSeasons {
+                await store.loadMoreHistory()
+            }
+            guard !Task.isCancelled else { return }
+            await Task.yield()
+            if let anchorID {
+                proxy.scrollTo(anchorID, anchor: .top)
+            }
+        }
+    }
+
+    private func scheduleHistoryLoadIfNeeded(using proxy: ScrollViewProxy) {
+        pendingHistoryLoad?.cancel()
+        guard isHistoryLoaderArmed, isHistoryBoundaryVisible else { return }
+
+        pendingHistoryLoad = Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, isHistoryBoundaryVisible else { return }
+            loadHistoryIfNeeded(using: proxy)
+        }
+    }
+
     private func scrollToPresent(
         _ proxy: ScrollViewProxy,
         sections: [AiringSection],
         animated: Bool
     ) {
         guard let id = anchorSectionID(in: sections) else { return }
-        DispatchQueue.main.async {
-            if animated {
-                withAnimation(.snappy) { proxy.scrollTo(id, anchor: .top) }
-            } else {
+        if animated {
+            withAnimation(.easeOut(duration: 0.28)) {
                 proxy.scrollTo(id, anchor: .top)
             }
+        } else {
+            proxy.scrollTo(id, anchor: .top)
         }
     }
 
@@ -139,6 +191,85 @@ struct ShowsView: View {
 
         return sections.last(where: { !$0.airings.compactMap(\.airDate).isEmpty })?.id
             ?? sections.first?.id
+    }
+}
+
+private struct ScrollTopObserver: UIViewRepresentable {
+    let onTopChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onTopChange: onTopChange)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        context.coordinator.attachWhenReady(from: view)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onTopChange = onTopChange
+        context.coordinator.attachWhenReady(from: uiView)
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    final class Coordinator {
+        var onTopChange: (Bool) -> Void
+        private weak var scrollView: UIScrollView?
+        private var observation: NSKeyValueObservation?
+        private var lastReportedValue: Bool?
+        private var attachmentAttempts = 0
+
+        init(onTopChange: @escaping (Bool) -> Void) {
+            self.onTopChange = onTopChange
+        }
+
+        func attachWhenReady(from view: UIView) {
+            guard observation == nil else { return }
+            var ancestor = view.superview
+            while let candidate = ancestor {
+                if let scrollView = candidate as? UIScrollView {
+                    attach(to: scrollView)
+                    return
+                }
+                ancestor = candidate.superview
+            }
+
+            guard attachmentAttempts < 5 else { return }
+            attachmentAttempts += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak view] in
+                guard let self, let view else { return }
+                self.attachWhenReady(from: view)
+            }
+        }
+
+        func detach() {
+            observation?.invalidate()
+            observation = nil
+            scrollView = nil
+        }
+
+        private func attach(to scrollView: UIScrollView) {
+            self.scrollView = scrollView
+            observation = scrollView.observe(\.contentOffset, options: [.initial, .new]) {
+                [weak self] scrollView, _ in
+                self?.reportPosition(of: scrollView)
+            }
+        }
+
+        private func reportPosition(of scrollView: UIScrollView) {
+            let topOffset = -scrollView.adjustedContentInset.top
+            let isAtTop = scrollView.contentOffset.y <= topOffset + 12
+            guard isAtTop != lastReportedValue else { return }
+            lastReportedValue = isAtTop
+            DispatchQueue.main.async { [weak self] in
+                self?.onTopChange(isAtTop)
+            }
+        }
     }
 }
 
@@ -203,6 +334,8 @@ struct AiringRow: View {
 
     private var show: Show { store.show(for: airing.showID) }
     private var isWatched: Bool { store.isWatched(airing) }
+    private var canMarkWatched: Bool { store.canMarkWatched(airing) }
+    private var canToggleWatched: Bool { canMarkWatched || isWatched }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -246,28 +379,54 @@ struct AiringRow: View {
 
             Spacer(minLength: 4)
 
-            Button {
-                withAnimation(.snappy) { store.toggleWatched(airing) }
-            } label: {
-                Image(systemName: isWatched ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-                    .foregroundStyle(isWatched ? AppTheme.accent : Color.secondary)
+            if canToggleWatched {
+                Button {
+                    withAnimation(.snappy) { store.toggleWatched(airing) }
+                } label: {
+                    Image(systemName: isWatched ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundStyle(isWatched ? AppTheme.completed : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isWatched ? "Mark unwatched" : "Mark watched")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isWatched ? "Mark unwatched" : "Mark watched")
         }
         .animation(.snappy, value: isWatched)
         .padding(.vertical, 5)
         .listRowBackground(Color(uiColor: .systemBackground))
-        .contextMenu {
-            if show.mediaType == .tvShow, airing.season > 0 {
+        .modifier(SeasonCompletionMenu(show: show, airing: airing))
+    }
+}
+
+private struct SeasonCompletionMenu: ViewModifier {
+    @EnvironmentObject private var store: ShowStore
+    let show: Show
+    let airing: Airing
+
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            if show.mediaType == .tvShow,
+               store.canMarkAiredSeasonEpisodes(containing: airing) {
                 Button {
-                    Task {
-                        await store.markSeasonWatched(containing: airing)
+                    if store.canMarkSeasonWatched(containing: airing) {
+                        store.markSeasonWatched(containing: airing)
+                    } else {
+                        store.markAiredSeasonEpisodesWatched(containing: airing)
                     }
                 } label: {
-                    Label("Mark season watched", systemImage: "checkmark.circle.fill")
+                    Label(
+                        store.canMarkSeasonWatched(containing: airing)
+                            ? "Mark season watched"
+                            : "Mark aired episodes watched",
+                        systemImage: "checkmark.circle.fill"
+                    )
                 }
+            }
+
+            Button(role: .destructive) {
+                store.toggleFollow(show)
+            } label: {
+                Label("Unsubscribe", systemImage: "minus.circle")
             }
         } preview: {
             SeasonWatchPreview(show: show, airing: airing)
@@ -287,7 +446,7 @@ private struct SeasonWatchPreview: View {
                 Text(show.title)
                     .font(.headline)
                     .lineLimit(2)
-                Text("Season \(airing.season)")
+                Text(airing.season > 0 ? "Season \(airing.season)" : show.mediaType.title)
                     .font(.subheadline)
                     .foregroundStyle(Color.secondary)
             }
@@ -312,12 +471,12 @@ struct PosterView: View {
                     .resizable()
                     .scaledToFill()
             } else if let imageURL = show.imageURL {
-                AsyncImage(url: imageURL) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        posterPlaceholder
-                    }
+                CachedPosterImage(
+                    url: imageURL,
+                    contentMode: .fill,
+                    maxPixelSize: min(360, max(160, Int(height * 2)))
+                ) {
+                    posterPlaceholder
                 }
             } else {
                 posterPlaceholder

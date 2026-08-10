@@ -11,25 +11,33 @@ struct CloudStateSnapshot: Codable {
 
 final class CloudStateStore {
     private let key = "userStateSnapshot"
-    private let store = NSUbiquitousKeyValueStore.default
+    private let store: NSUbiquitousKeyValueStore? = {
+        #if CLOUD_SYNC && !targetEnvironment(simulator)
+        return .default
+        #else
+        return nil
+        #endif
+    }()
+
+    var isAvailable: Bool { store != nil }
 
     func synchronize() {
-        store.synchronize()
+        store?.synchronize()
     }
 
     func load() -> CloudStateSnapshot? {
-        guard let data = store.data(forKey: key) else { return nil }
+        guard let data = store?.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(CloudStateSnapshot.self, from: data)
     }
 
     func save(_ snapshot: CloudStateSnapshot) {
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        store.set(data, forKey: key)
-        store.synchronize()
+        store?.set(data, forKey: key)
     }
 
-    func observeChanges(_ handler: @escaping (CloudStateSnapshot?) -> Void) -> NSObjectProtocol {
-        NotificationCenter.default.addObserver(
+    func observeChanges(_ handler: @escaping (CloudStateSnapshot?) -> Void) -> NSObjectProtocol? {
+        guard let store else { return nil }
+        return NotificationCenter.default.addObserver(
             forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
             object: store,
             queue: .main
